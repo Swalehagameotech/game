@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PlusCircle, Key, Users, Trophy, Play, Lock, RefreshCw, AlertCircle, ShieldCheck } from 'lucide-react';
+import { PlusCircle, Key, Users, Trophy, Play, Lock, RefreshCw, AlertCircle, ShieldCheck, Coins, Flame, Crown } from 'lucide-react';
 import axiosClient from '@/shared/api/axiosClient';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
@@ -194,6 +194,93 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
               <Key className="w-4 h-4 text-amber-400" />
               <span>Join with Code</span>
             </button>
+          </div>
+      {/* 3 Stake Tier Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Low Stake Box */}
+        <div
+          onClick={() => setSelectedStake('LOW')}
+          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            selectedStake === 'LOW'
+              ? 'bg-emerald-950/40 border-emerald-500 ring-2 ring-emerald-500/30'
+              : 'bg-slate-900/80 border-slate-800 hover:border-emerald-500/40'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              CASUAL PLAY
+            </span>
+            <Coins className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <h3 className="text-xl font-black text-slate-100 mb-1">Low Stakes</h3>
+          <p className="text-xs text-slate-400 mb-4">Ideal for quick casual matches and practice hands.</p>
+          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
+              <span className="font-extrabold text-emerald-400 text-sm">₹10</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
+              <span className="font-extrabold text-slate-200 text-sm">₹1</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Medium Stake Box */}
+        <div
+          onClick={() => setSelectedStake('MEDIUM')}
+          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            selectedStake === 'MEDIUM'
+              ? 'bg-amber-950/40 border-amber-500 ring-2 ring-amber-500/30'
+              : 'bg-slate-900/80 border-slate-800 hover:border-amber-500/40'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              POPULAR
+            </span>
+            <Flame className="w-5 h-5 text-amber-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <h3 className="text-xl font-black text-slate-100 mb-1">Medium Stakes</h3>
+          <p className="text-xs text-slate-400 mb-4">Balanced stakes for competitive Teen Patti players.</p>
+          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
+              <span className="font-extrabold text-amber-400 text-sm">₹50</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
+              <span className="font-extrabold text-slate-200 text-sm">₹5</span>
+            </div>
+          </div>
+        </div>
+
+        {/* High Stake Box */}
+        <div
+          onClick={() => setSelectedStake('HIGH')}
+          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+            selectedStake === 'HIGH'
+              ? 'bg-rose-950/40 border-rose-500 ring-2 ring-rose-500/30'
+              : 'bg-slate-900/80 border-slate-800 hover:border-rose-500/40'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
+              HIGH ROLLER
+            </span>
+            <Crown className="w-5 h-5 text-rose-400 group-hover:scale-110 transition-transform" />
+          </div>
+          <h3 className="text-xl font-black text-slate-100 mb-1">High Stakes</h3>
+          <p className="text-xs text-slate-400 mb-4">Big pots & high risk for experienced players.</p>
+          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
+              <span className="font-extrabold text-rose-400 text-sm">₹250</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
+              <span className="font-extrabold text-slate-200 text-sm">₹25</span>
+            </div>
           </div>
         </div>
       </div>
