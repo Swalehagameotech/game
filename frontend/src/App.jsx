@@ -7,10 +7,11 @@ import WalletModal from '@/features/wallet/WalletModal';
 import LeaderboardModal from '@/features/leaderboard/LeaderboardModal';
 import NotificationDrawer from '@/features/notifications/NotificationDrawer';
 import AdminModal from '@/features/admin/AdminModal';
+import TutorialOverlay from '@/features/auth/TutorialOverlay';
 import { useAuth } from '@/context/AuthContext';
 
 export default function App() {
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [activeTableId, setActiveTableId] = useState(() => {
     return localStorage.getItem('activeTableId') || null;
   });
@@ -72,6 +73,9 @@ export default function App() {
       <LeaderboardModal isOpen={isLeaderboardOpen} onClose={() => setIsLeaderboardOpen(false)} />
       <NotificationDrawer isOpen={isNotificationsOpen} onClose={() => setIsNotificationsOpen(false)} />
       <AdminModal isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
+
+      {/* First-Time Onboarding Tutorial Overlay */}
+      <TutorialOverlay user={user} />
     </div>
   );
 }

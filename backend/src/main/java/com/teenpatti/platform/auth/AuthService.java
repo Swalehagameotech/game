@@ -44,11 +44,15 @@ public class AuthService {
             throw new DuplicateUserException("An account with the provided email or phone number already exists.");
         }
 
+        if (request.getDisplayName() != null && !request.getDisplayName().isBlank() && userRepository.existsByDisplayName(request.getDisplayName().trim())) {
+            throw new DuplicateUserException("Display name '" + request.getDisplayName() + "' is already taken. Please choose a different display name.");
+        }
+
         User user = User.builder()
                 .email(request.getEmail())
                 .phoneNumber(request.getPhoneNumber())
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .displayName(request.getDisplayName())
+                .displayName(request.getDisplayName().trim())
                 .kycStatus(KycStatus.NOT_STARTED)
                 .accountStatus(AccountStatus.ACTIVE)
                 .role(com.teenpatti.platform.user.UserRole.PLAYER)
@@ -56,10 +60,10 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
-        // Create welcome bonus wallet atomically for new user (10,000 Paise = ₹100)
+        // Create welcome bonus wallet atomically for new user (100,000 Paise = ₹1,000)
         Wallet wallet = Wallet.builder()
                 .userId(savedUser.getId())
-                .balancePaise(10_000L)
+                .balancePaise(100_000L)
                 .currency("INR")
                 .build();
         walletRepository.save(wallet);
@@ -94,6 +98,42 @@ public class AuthService {
 
         log.info("User [{}] logged in successfully", user.getId());
         return createAuthSession(user);
+    }
+
+    @Transactional
+    public AuthResponse guestLogin() {
+        long randomId = (long) (Math.floor(100000 + Math.random() * 900000));
+        String guestEmail = "guest_" + System.currentTimeMillis() + "_" + randomId + "@teenpatti.internal";
+        String guestPhone = "+919" + String.format("%09d", (long)(Math.random() * 1000000000L));
+        String guestPass = "GuestPass_" + randomId;
+        String guestDisplay = "Guest Player " + (randomId % 10000);
+
+        while (userRepository.existsByDisplayName(guestDisplay)) {
+            randomId = (long) (Math.floor(100000 + Math.random() * 900000));
+            guestDisplay = "Guest Player " + (randomId % 10000);
+        }
+
+        User user = User.builder()
+                .email(guestEmail)
+                .phoneNumber(guestPhone)
+                .passwordHash(passwordEncoder.encode(guestPass))
+                .displayName(guestDisplay)
+                .kycStatus(KycStatus.NOT_STARTED)
+                .accountStatus(AccountStatus.ACTIVE)
+                .role(com.teenpatti.platform.user.UserRole.PLAYER)
+                .build();
+
+        User savedUser = userRepository.save(user);
+
+        Wallet wallet = Wallet.builder()
+                .userId(savedUser.getId())
+                .balancePaise(100_000L)
+                .currency("INR")
+                .build();
+        walletRepository.save(wallet);
+
+        log.info("Registered and logged in guest user [{}]", savedUser.getId());
+        return createAuthSession(savedUser);
     }
 
     /**

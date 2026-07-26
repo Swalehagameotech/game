@@ -81,7 +81,6 @@ public class LobbyService {
         String inviteCode = inviteCodeGenerator.generateUniqueInviteCode();
 
         List<String> initialSeated = new ArrayList<>();
-        initialSeated.add(userId);
 
         long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
                 ? request.getBootAmount() 
@@ -126,7 +125,6 @@ public class LobbyService {
 
     public TableSummaryResponse createPublicTable(String userId, CreatePrivateTableRequest request) {
         List<String> initialSeated = new ArrayList<>();
-        initialSeated.add(userId);
 
         long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
                 ? request.getBootAmount() 

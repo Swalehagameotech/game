@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, DollarSign, ArrowUpRight, Ban, EyeOff, Award, LogOut, ShieldAlert, Sparkles, Coins } from 'lucide-react';
+import { Eye, DollarSign, ArrowUpRight, Ban, EyeOff, Award, LogOut, ShieldAlert, Sparkles, Coins, BookOpen, Trash2 } from 'lucide-react';
 import { wsGameService } from '@/shared/api/websocketService';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
+import RulebookModal from './RulebookModal';
 import axiosClient from '@/shared/api/axiosClient';
 
 // Card Helper Function
@@ -21,6 +22,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
   const { user, accessToken } = useAuth();
   const { gameState, updateGameState } = useGame();
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [showRulebook, setShowRulebook] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -122,13 +124,44 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           </div>
         </div>
 
-        <button
-          onClick={() => setShowLeaveModal(true)}
-          className="px-3.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>Leave Table</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowRulebook(true)}
+            className="px-3.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Rules</span>
+          </button>
+
+          {gameState?.hostId === user?.id && (
+            <button
+              onClick={async () => {
+                if (window.confirm('Are you sure you want to delete this table? All seated players will be refunded.')) {
+                  try {
+                    await axiosClient.delete(`/tables/${tableId}`);
+                  } catch (e) {
+                    console.error('Delete table error:', e);
+                  } finally {
+                    onLeaveTable();
+                  }
+                }
+              }}
+              className="px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Delete Table (Creator Only)"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Table</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowLeaveModal(true)}
+            className="px-3.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Leave Table</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Oval Poker Table Felt */}
@@ -264,6 +297,22 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         )}
       </AnimatePresence>
 
+      {/* Beginner Help Mode Contextual Hint Banner (First 5 Matches) */}
+      {(user?.matchesPlayedCount ?? 0) < 5 && (
+        <div className="relative z-20 mb-3 px-4 py-2 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/15 border border-amber-500/30 rounded-xl text-center backdrop-blur-md">
+          <span className="text-xs font-semibold text-amber-300 flex items-center justify-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" />
+            {isMyTurn
+              ? myStatus === 'BLIND'
+                ? 'It is your turn! You are playing Blind (1x stake). Click Chaal to continue or See Cards to view.'
+                : 'It is your turn! You are Seen (2x stake). Click Chaal to continue or Raise to double stake.'
+              : players.length === 2
+              ? 'Only 2 players remain! You may click Show to reveal hands and claim the pot.'
+              : 'Help Mode Active (Match ' + ((user?.matchesPlayedCount || 0) + 1) + '/5): Follow turns and manage your bets!'}
+          </span>
+        </div>
+      )}
+
       {/* Bottom Action Controls Bar */}
       <div className="relative z-20 bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-4 rounded-2xl shadow-2xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -316,6 +365,15 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             </button>
 
             <button
+              onClick={() => sendPlayerAction('SIDE_SHOW_REQUEST')}
+              disabled={!isMyTurn || actionLoading}
+              className="px-4 py-2.5 bg-slate-950 border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer"
+            >
+              <Eye className="w-4 h-4" />
+              <span>Side Show</span>
+            </button>
+
+            <button
               onClick={() => sendPlayerAction('SHOW')}
               disabled={!isMyTurn || actionLoading}
               className="px-4 py-2.5 bg-slate-950 border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer"
@@ -361,6 +419,9 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Teen Patti Rules & Hand Rankings Modal */}
+      <RulebookModal isOpen={showRulebook} onClose={() => setShowRulebook(false)} />
     </div>
   );
 }

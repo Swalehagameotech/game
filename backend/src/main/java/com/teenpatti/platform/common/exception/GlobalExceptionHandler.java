@@ -32,6 +32,21 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
     }
 
+    @ExceptionHandler({org.springframework.dao.DuplicateKeyException.class, com.mongodb.MongoWriteException.class})
+    public ResponseEntity<ErrorResponse> handleDuplicateKeyException(Exception ex) {
+        log.warn("Database duplicate key constraint violation: {}", ex.getMessage());
+        String msg = "An account or display name already exists with the provided details.";
+        if (ex.getMessage() != null && ex.getMessage().contains("displayName")) {
+            msg = "The specified display name is already taken. Please choose a different display name.";
+        } else if (ex.getMessage() != null && ex.getMessage().contains("email")) {
+            msg = "An account with the provided email already exists.";
+        } else if (ex.getMessage() != null && ex.getMessage().contains("phoneNumber")) {
+            msg = "An account with the provided phone number already exists.";
+        }
+        ErrorResponse errorResponse = ErrorResponse.of("DUPLICATE_USER", msg);
+        return new ResponseEntity<>(errorResponse, HttpStatus.CONFLICT);
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ErrorResponse> handleBadCredentialsException(BadCredentialsException ex) {
         log.warn("Bad credentials authentication failure: {}", ex.getMessage());

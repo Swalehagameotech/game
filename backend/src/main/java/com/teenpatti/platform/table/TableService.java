@@ -38,6 +38,7 @@ public class TableService {
     private final WalletService walletService;
     private final StakeTierConfig stakeTierConfig;
     private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
+    private final com.teenpatti.platform.game.engine.GameLoopOrchestrator gameLoopOrchestrator;
 
     public List<Table> getTablesByStatus(TableStatus status) {
         return tableRepository.findByStatus(status);
@@ -49,17 +50,8 @@ public class TableService {
 
     public List<Table> getActiveJoinableTables() {
         return tableRepository.findAll().stream()
-                .filter(t -> t.getStatus() == TableStatus.WAITING || t.getStatus() == TableStatus.IN_PROGRESS)
+                .filter(t -> t.getStatus() != TableStatus.CLOSED)
                 .toList();
-    }
-
-    public void deleteTable(String userId, String tableId) {
-        Table table = tableRepository.findById(tableId)
-                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
-        table.setStatus(TableStatus.CLOSED);
-        tableRepository.save(table);
-        webSocketEventPublisher.publishTableDeleted(tableId);
-        log.info("User/Admin [{}] deleted table [{}]", userId, tableId);
     }
 
     /**
@@ -119,15 +111,8 @@ public class TableService {
 
         webSocketEventPublisher.publishPlayerJoined(tableId, userId, claimedTable.getSeatedPlayerIds().size());
 
-        // Auto-start condition (Model 1): As soon as minimum required players (3) have seated
         int minReq = claimedTable.getMinPlayers() > 0 ? claimedTable.getMinPlayers() : 3;
-        if (claimedTable.getStatus() == TableStatus.WAITING && claimedTable.getSeatedPlayerIds().size() >= minReq) {
-            claimedTable.setStatus(TableStatus.IN_PROGRESS);
-            claimedTable.setUpdatedAt(Instant.now());
-            claimedTable = tableRepository.save(claimedTable);
-            log.info("Minimum required players [{}] reached on table [{}]. Automatically transitioning to IN_PROGRESS!", minReq, tableId);
-            webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(claimedTable));
-        }
+        gameLoopOrchestrator.handlePlayerSeated(tableId, claimedTable.getSeatedPlayerIds().size(), minReq);
 
         return JoinTableResponse.builder()
                 .tableId(tableId)
@@ -182,6 +167,9 @@ public class TableService {
         executeAtomicLeave(userId, tableId);
         int updatedCount = Math.max(0, initialTable.getSeatedPlayerIds().size() - 1);
         webSocketEventPublisher.publishPlayerLeft(tableId, userId, updatedCount);
+
+        int minReq = initialTable.getMinPlayers() > 0 ? initialTable.getMinPlayers() : 3;
+        gameLoopOrchestrator.handlePlayerLeft(tableId, updatedCount, minReq);
 
         if (currentStatus == TableStatus.WAITING) {
             // Full refund
@@ -239,6 +227,35 @@ public class TableService {
             }
         }
         return closedCount;
+    }
+
+    public void deleteTable(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+
+        if (table.getHostId() != null && !table.getHostId().equals(userId)) {
+            throw new IllegalStateException("Only the table creator can delete this table.");
+        }
+
+        if (table.getStatus() == TableStatus.IN_PROGRESS || table.getStatus() == TableStatus.PLAYING) {
+            throw new IllegalStateException("Cannot delete a table while a hand is in progress.");
+        }
+
+        if (table.getSeatedPlayerIds() != null && !table.getSeatedPlayerIds().isEmpty()) {
+            long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
+            for (String playerId : table.getSeatedPlayerIds()) {
+                String refId = "table:" + tableId + ":delete_refund:" + playerId;
+                try {
+                    walletService.applyLedgerEntry(playerId, LedgerEntryType.REFUND, buyInAmountPaise, refId);
+                } catch (Exception ex) {
+                    log.warn("Error refunding buy-in to user [{}] on table deletion", playerId, ex);
+                }
+            }
+        }
+
+        tableRepository.deleteById(tableId);
+        log.info("Creator/Host [{}] deleted table [{}]", userId, tableId);
+        webSocketEventPublisher.publishTableDeleted(tableId);
     }
 
     private boolean processSingleStaleTableCleanup(String tableId) {

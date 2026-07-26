@@ -33,4 +33,12 @@ public class WalletController {
         PageResponse<LedgerEntryResponse> ledgerHistory = walletService.getLedgerHistory(userId, page, size);
         return ResponseEntity.ok(ApiResponse.success("Ledger history retrieved successfully", ledgerHistory));
     }
+
+    @PostMapping("/deposit/demo")
+    public ResponseEntity<ApiResponse<WalletBalanceResponse>> depositDemoChips(
+            @CurrentUser String userId,
+            @RequestParam(defaultValue = "100000") long amountPaise) {
+        WalletBalanceResponse balance = walletService.depositDemoChips(userId, amountPaise);
+        return ResponseEntity.ok(ApiResponse.success("Demo chips added to wallet successfully", balance));
+    }
 }

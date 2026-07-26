@@ -27,13 +27,31 @@ public class DefaultTableInitializer {
     }
 
     public synchronized void ensureDefaultPublicTables() {
-        // Clean up empty WAITING tables that have no seated players
-        for (Table table : tableRepository.findAll()) {
-            if (table.getStatus() == TableStatus.WAITING && (table.getSeatedPlayerIds() == null || table.getSeatedPlayerIds().isEmpty())) {
-                table.setStatus(TableStatus.CLOSED);
-                tableRepository.save(table);
-                log.info("Cleaned up empty unseated table [{}]", table.getId());
-            }
+        createDefaultPublicTableIfMissing(StakeTier.LOW, "Low Stakes Room", 1000L);
+        createDefaultPublicTableIfMissing(StakeTier.MEDIUM, "Medium Stakes Room", 5000L);
+        createDefaultPublicTableIfMissing(StakeTier.HIGH, "High Rollers Room", 25000L);
+    }
+
+    private void createDefaultPublicTableIfMissing(StakeTier tier, String name, long bootPaise) {
+        boolean exists = tableRepository.findAll().stream()
+                .anyMatch(t -> t.getTableType() == TableType.PUBLIC 
+                        && t.getStakeTier() == tier 
+                        && t.getStatus() != TableStatus.CLOSED);
+
+        if (!exists) {
+            Table table = Table.builder()
+                    .tableName(name)
+                    .tableType(TableType.PUBLIC)
+                    .visibility("PUBLIC")
+                    .stakeTier(tier)
+                    .bootAmountPaise(bootPaise)
+                    .maxPlayers(6)
+                    .seatedPlayerIds(new ArrayList<>())
+                    .status(TableStatus.WAITING)
+                    .createdAt(Instant.now())
+                    .build();
+            tableRepository.save(table);
+            log.info("Seeded default public table [{}] - Tier: {}", name, tier);
         }
     }
 }

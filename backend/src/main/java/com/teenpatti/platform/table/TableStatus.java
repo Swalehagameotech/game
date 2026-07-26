@@ -5,6 +5,12 @@ package com.teenpatti.platform.table;
  */
 public enum TableStatus {
     WAITING,
+    COUNTDOWN,
+    DEALING,
+    PLAYING,
     IN_PROGRESS,
+    SHOW,
+    ROUND_END,
+    NEXT_ROUND,
     CLOSED
 }

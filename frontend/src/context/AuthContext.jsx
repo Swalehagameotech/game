@@ -73,15 +73,19 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const handleUnauthorized = () => {
+    const handleAuthExpired = () => {
       setUser(null);
       setAccessToken(null);
       localStorage.removeItem('user');
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
     };
-    window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    window.addEventListener('auth:expired', handleAuthExpired);
+    window.addEventListener('auth:unauthorized', handleAuthExpired);
+    return () => {
+      window.removeEventListener('auth:expired', handleAuthExpired);
+      window.removeEventListener('auth:unauthorized', handleAuthExpired);
+    };
   }, []);
 
   const login = (userData, token, refreshToken = null) => {

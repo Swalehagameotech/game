@@ -24,9 +24,14 @@ const processQueue = (error, token = null) => {
 
 axiosClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const rawToken = localStorage.getItem('accessToken') || localStorage.getItem('token');
+    if (rawToken && typeof rawToken === 'string' && rawToken.split('.').length === 3) {
+      config.headers.Authorization = `Bearer ${rawToken}`;
+    } else if (rawToken) {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
     }
     return config;
   },
@@ -77,6 +82,11 @@ axiosClient.interceptors.response.use(
         processQueue(null, newAccessToken);
         return axiosClient(originalRequest);
       } catch (refreshErr) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
+        window.dispatchEvent(new Event('auth:expired'));
         processQueue(refreshErr, null);
         localStorage.removeItem('user');
         localStorage.removeItem('accessToken');

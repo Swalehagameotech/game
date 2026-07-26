@@ -37,6 +37,21 @@ export default function WalletModal({ isOpen, onClose }) {
 
   if (!isOpen) return null;
 
+  const handleQuickDemoDeposit = async () => {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await axiosClient.post('/wallet/deposit/demo?amountPaise=100000');
+      setMessage('Successfully added +₹1,000 Demo Chips to your wallet!');
+      fetchWalletDetails();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to add demo chips.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDepositSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -45,26 +60,8 @@ export default function WalletModal({ isOpen, onClose }) {
 
     try {
       const paise = Math.round(Number(amountRupees) * 100);
-      const { data: orderData } = await axiosClient.post('/transactions/deposit/create-order', {
-        amountPaise: paise,
-      });
-
-      // Simulate payment webhook success
-      await axiosClient.post('/transactions/deposit/razorpay-webhook', {
-        event: 'payment.captured',
-        payload: {
-          payment: {
-            entity: {
-              id: `pay_${Math.floor(100000 + Math.random() * 900000)}`,
-              order_id: orderData.razorpayOrderId,
-              amount: paise,
-              status: 'captured',
-            },
-          },
-        },
-      });
-
-      setMessage(`Successfully deposited ₹${amountRupees}!`);
+      await axiosClient.post('/wallet/deposit/demo?amountPaise=' + paise);
+      setMessage(`Successfully deposited ₹${amountRupees} Demo Chips!`);
       setAmountRupees('');
       fetchWalletDetails();
     } catch (err) {

@@ -54,4 +54,12 @@ public class UserService {
         log.info("Updated profile for user [{}]", userId);
         return UserMapper.toUserProfileResponse(savedUser);
     }
+
+    public void completeTutorial(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
+        user.setFirstLoginTutorialCompleted(true);
+        userRepository.save(user);
+        log.info("User [{}] completed first login tutorial", userId);
+    }
 }

@@ -77,6 +77,33 @@ public class Table {
     @Builder.Default
     private long potPaise = 0L;
 
+    @Builder.Default
+    private int dealerSeatIndex = 0;
+
+    private String currentTurnUserId;
+
+    @Builder.Default
+    private long currentStakePaise = 1000L;
+
+    @Builder.Default
+    private int roundNumber = 1;
+
+    private String lastAction;
+
+    @Builder.Default
+    private List<String> activePlayerIds = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> packedPlayerIds = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> seenPlayerIds = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> blindPlayerIds = new ArrayList<>();
+
+    private String winnerUserId;
+
     private String currentHandId;
 
     @Builder.Default

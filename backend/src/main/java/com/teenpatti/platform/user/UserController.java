@@ -49,4 +49,10 @@ public class UserController {
         UserProfileResponse response = userService.getUserProfile(user.getId());
         return ResponseEntity.ok(ApiResponse.success("KYC submission received and pending review", response));
     }
+
+    @PostMapping("/tutorial/complete")
+    public ResponseEntity<ApiResponse<Void>> completeTutorial(@CurrentUser String userId) {
+        userService.completeTutorial(userId);
+        return ResponseEntity.ok(ApiResponse.success("Tutorial marked as completed", null));
+    }
 }

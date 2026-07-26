@@ -60,6 +60,14 @@ public class WalletService {
         return ledgerEntryRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
     }
 
+    public WalletBalanceResponse depositDemoChips(String userId, long amountPaise) {
+        long depositAmount = amountPaise > 0 ? amountPaise : 100_000L; // Default ₹1,000
+        String referenceId = "demo_deposit:" + userId + ":" + System.currentTimeMillis();
+        applyLedgerEntry(userId, LedgerEntryType.DEPOSIT, depositAmount, referenceId);
+        log.info("Deposited {} paise demo chips to user [{}]", depositAmount, userId);
+        return getBalance(userId);
+    }
+
     /**
      * Applies a financial transaction to a user's wallet and records an immutable ledger entry.
      *

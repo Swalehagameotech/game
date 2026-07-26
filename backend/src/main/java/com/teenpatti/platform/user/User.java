@@ -57,6 +57,12 @@ public class User {
     @Builder.Default
     private boolean isOnline = false;
 
+    @Builder.Default
+    private boolean firstLoginTutorialCompleted = false;
+
+    @Builder.Default
+    private int matchesPlayedCount = 0;
+
     @Version
     private Long version;
 
