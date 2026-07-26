@@ -5,7 +5,7 @@ import axiosClient from '@/shared/api/axiosClient';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
 
-export default function LobbyView({ onJoinTable }) {
+export default function LobbyView({ onJoinTable, onOpenAuth }) {
   const { user, isAuthenticated } = useAuth();
   const { updateTableState } = useGame();
 
@@ -14,11 +14,13 @@ export default function LobbyView({ onJoinTable }) {
   const [selectedStake, setSelectedStake] = useState('ALL');
   const [error, setError] = useState('');
 
-  // Private Table Creation Modal State
+  // Private/Public Table Creation Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createTableType, setCreateTableType] = useState('PUBLIC');
   const [createStakeTier, setCreateStakeTier] = useState('LOW');
   const [createMaxPlayers, setCreateMaxPlayers] = useState(6);
   const [createdPrivateCode, setCreatedPrivateCode] = useState(null);
+  const [pendingCreatedTableId, setPendingCreatedTableId] = useState(null);
 
   // Private Table Code Join Modal State
   const [showJoinPrivateModal, setShowJoinPrivateModal] = useState(false);
@@ -32,8 +34,9 @@ export default function LobbyView({ onJoinTable }) {
       if (selectedStake !== 'ALL') {
         params.stakeTier = selectedStake;
       }
-      const { data } = await axiosClient.get('/tables', { params });
-      setTables(data.content || data || []);
+      const { data: res } = await axiosClient.get('/lobby/tables', { params });
+      const rawList = res?.data?.content || res?.data || res?.content || res;
+      setTables(Array.isArray(rawList) ? rawList : []);
     } catch (err) {
       console.error('Failed to fetch lobby tables:', err);
       setError('Could not load active lobby tables. Make sure backend is running.');
@@ -44,52 +47,89 @@ export default function LobbyView({ onJoinTable }) {
 
   useEffect(() => {
     fetchTables();
-    // Only start polling interval when user is authenticated
-    if (!isAuthenticated) return;
-    const interval = setInterval(fetchTables, 10000);
+    const interval = setInterval(fetchTables, 3000);
     return () => clearInterval(interval);
   }, [selectedStake, isAuthenticated]);
 
   const handleJoinTableClick = async (tableId) => {
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      else setError('Please log in to join table.');
+      return;
+    }
     setError('');
     try {
       // Step 1: Pre-check eligibility
-      const checkRes = await axiosClient.get(`/lobby/tables/${tableId}/check-eligibility`);
-      if (!checkRes.data.eligible) {
-        setError(`Not eligible to join: ${checkRes.data.reason}`);
+      const checkRes = await axiosClient.post(`/lobby/tables/${tableId}/check-eligibility`);
+      const checkData = checkRes.data?.data || checkRes.data;
+      if (!checkData.eligible) {
+        if (checkData.reason === 'INSUFFICIENT_BALANCE') {
+          const reqRs = checkData.minRequiredPaise ? (checkData.minRequiredPaise / 100) : 10;
+          const curRs = checkData.currentBalancePaise ? (checkData.currentBalancePaise / 100).toFixed(2) : '0.00';
+          setError(`Insufficient wallet balance to join table! Required min buy-in is ₹${reqRs} (Your balance: ₹${curRs}). Register a new account for ₹100 welcome bonus or Add Cash via Wallet.`);
+        } else {
+          setError(`Not eligible to join: ${checkData.reason}`);
+        }
         return;
       }
 
       // Step 2: Perform atomic join
       const joinRes = await axiosClient.post(`/tables/${tableId}/join`);
-      updateTableState(joinRes.data);
+      const joinData = joinRes.data?.data || joinRes.data;
+      updateTableState(joinData);
       onJoinTable(tableId);
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data || 'Failed to join table.');
+      const errMsg = err.response?.data?.message || err.response?.data?.error || err.response?.data || 'Failed to join table.';
+      setError(typeof errMsg === 'string' ? errMsg : 'Failed to join table.');
     }
   };
 
-  const handleCreatePrivateTable = async (e) => {
+  const handleCreateTableSubmit = async (e) => {
     e.preventDefault();
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      setError('Please log in to create a table.');
+      return;
+    }
     setError('');
     try {
-      const { data } = await axiosClient.post('/lobby/tables/private', {
+      const isPrivate = createTableType === 'PRIVATE';
+      const endpoint = isPrivate ? '/lobby/tables/private' : '/lobby/tables/public';
+      const { data: res } = await axiosClient.post(endpoint, {
         stakeTier: createStakeTier,
         maxPlayers: createMaxPlayers,
       });
 
-      setCreatedPrivateCode(data.inviteCode);
+      const data = res?.data || res;
+      const targetTableId = data.tableId || data.id;
+      setPendingCreatedTableId(targetTableId);
+
+      if (isPrivate) {
+        setCreatedPrivateCode(data.inviteCode);
+      } else {
+        setShowCreateModal(false);
+        if (targetTableId) {
+          handleJoinTableClick(targetTableId);
+        }
+      }
       fetchTables();
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data || 'Failed to create private table.');
+      const errMsg = err.response?.data?.message || err.response?.data?.error || err.response?.data || 'Failed to create table.';
+      setError(typeof errMsg === 'string' ? errMsg : 'Failed to create table.');
     }
   };
 
   const handleJoinPrivateByCode = async (e) => {
     e.preventDefault();
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      setError('Please log in to join private tables.');
+      return;
+    }
     setError('');
     try {
-      const { data: tableData } = await axiosClient.get(`/lobby/tables/private/${inviteCodeInput.trim().toUpperCase()}`);
+      const { data: res } = await axiosClient.get(`/lobby/tables/private/${inviteCodeInput.trim().toUpperCase()}`);
+      const tableData = res?.data || res;
       handleJoinTableClick(tableData.tableId || tableData.id);
       setShowJoinPrivateModal(false);
     } catch (err) {
@@ -125,7 +165,15 @@ export default function LobbyView({ onJoinTable }) {
           {/* Lobby Action Buttons */}
           <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={() => { setShowCreateModal(true); setCreatedPrivateCode(null); }}
+              onClick={() => {
+                if (!isAuthenticated) {
+                  if (onOpenAuth) onOpenAuth();
+                  else setError('Please log in to create a private table.');
+                  return;
+                }
+                setShowCreateModal(true);
+                setCreatedPrivateCode(null);
+              }}
               className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 flex items-center gap-2 transition-all cursor-pointer"
             >
               <PlusCircle className="w-4 h-4" />
@@ -133,7 +181,14 @@ export default function LobbyView({ onJoinTable }) {
             </button>
 
             <button
-              onClick={() => setShowJoinPrivateModal(true)}
+              onClick={() => {
+                if (!isAuthenticated) {
+                  if (onOpenAuth) onOpenAuth();
+                  else setError('Please log in to join a private table.');
+                  return;
+                }
+                setShowJoinPrivateModal(true);
+              }}
               className="px-4 py-2.5 bg-slate-900 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl hover:border-amber-500/50 flex items-center gap-2 transition-all cursor-pointer"
             >
               <Key className="w-4 h-4 text-amber-400" />
@@ -282,25 +337,55 @@ export default function LobbyView({ onJoinTable }) {
                 <div className="text-center py-6 bg-slate-950 border border-slate-800 rounded-xl p-4">
                   <ShieldCheck className="w-12 h-12 text-emerald-400 mx-auto mb-2" />
                   <span className="text-xs text-slate-400 block">PRIVATE INVITE CODE</span>
-                  <span className="font-mono text-3xl font-black text-amber-400 tracking-wider my-2 block">
+                  <span className="text-3xl font-black text-amber-400 tracking-widest my-2 block font-mono">
                     {createdPrivateCode}
                   </span>
-                  <p className="text-xs text-slate-400">Share this code with your friends to join this table</p>
+                  <p className="text-xs text-slate-400">Share this invite code with your friends to join your private room</p>
                   <button
-                    onClick={() => setShowCreateModal(false)}
-                    className="mt-5 px-6 py-2 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400"
+                    onClick={() => {
+                      setShowCreateModal(false);
+                      setCreatedPrivateCode(null);
+                      if (pendingCreatedTableId) {
+                        handleJoinTableClick(pendingCreatedTableId);
+                      }
+                    }}
+                    className="mt-5 px-6 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shadow-lg shadow-amber-500/20"
                   >
-                    Done
+                    Enter Game Table Now
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleCreatePrivateTable} className="space-y-4">
+                <form onSubmit={handleCreateTableSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Table Access</label>
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 border border-slate-800 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setCreateTableType('PUBLIC')}
+                        className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                          createTableType === 'PUBLIC' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Public (Open to All)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCreateTableType('PRIVATE')}
+                        className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                          createTableType === 'PRIVATE' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Private (Invite Code)
+                      </button>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Stake Tier</label>
                     <select
                       value={createStakeTier}
                       onChange={(e) => setCreateStakeTier(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
                       <option value="LOW">LOW (Min Buy-In ₹10)</option>
                       <option value="MEDIUM">MEDIUM (Min Buy-In ₹50)</option>
@@ -313,7 +398,7 @@ export default function LobbyView({ onJoinTable }) {
                     <select
                       value={createMaxPlayers}
                       onChange={(e) => setCreateMaxPlayers(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
                       <option value={2}>2 Players (Heads Up)</option>
                       <option value={4}>4 Players</option>
@@ -325,13 +410,13 @@ export default function LobbyView({ onJoinTable }) {
                     <button
                       type="button"
                       onClick={() => setShowCreateModal(false)}
-                      className="flex-1 py-2.5 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl hover:bg-slate-700"
+                      className="flex-1 py-2.5 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl hover:bg-slate-700 cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 py-2.5 bg-amber-500 text-slate-950 text-xs font-bold rounded-xl hover:bg-amber-400 shadow-lg shadow-amber-500/20"
+                      className="flex-1 py-2.5 bg-amber-500 text-slate-950 text-xs font-bold rounded-xl hover:bg-amber-400 shadow-lg shadow-amber-500/20 cursor-pointer"
                     >
                       Create Table
                     </button>

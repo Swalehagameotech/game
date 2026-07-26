@@ -97,6 +97,17 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             String tableId = sessionRegistry.getTableIdForUser(userId);
             sessionRegistry.unregisterUserSession(userId);
             if (tableId != null) {
+                perTableActionExecutor.executeTableActionSync(tableId, () -> {
+                    tableRepository.findById(tableId).ifPresent(table -> {
+                        if (table.getStatus() == TableStatus.WAITING && table.getSeatedPlayerIds() != null) {
+                            if (table.getSeatedPlayerIds().remove(userId)) {
+                                tableRepository.save(table);
+                                log.info("Removed disconnected ghost user [{}] from WAITING table [{}]", userId, tableId);
+                                broadcastPlayerProjections(tableId);
+                            }
+                        }
+                    });
+                });
                 disconnectGracePeriodManager.handleDisconnect(userId, tableId, () -> handleAutoFoldOnTurn(userId, tableId));
             }
         }
@@ -253,6 +264,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                     redisTemplate.convertAndSend(RedisClusterConfig.TABLE_BROADCAST_CHANNEL, objectMapper.writeValueAsString(payload));
                 } catch (Exception e) {
                     log.error("Redis PubSub publish error for table [{}], recipient [{}]: {}", tableId, pid, e.getMessage());
+                    WebSocketSession session = sessionRegistry.getWebSocketSession(pid);
+                    if (session != null && session.isOpen()) {
+                        sendMessageToSession(session, msg);
+                    }
                 }
             } else {
                 WebSocketSession session = sessionRegistry.getWebSocketSession(pid);

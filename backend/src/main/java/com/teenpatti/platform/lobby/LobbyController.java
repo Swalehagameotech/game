@@ -42,6 +42,14 @@ public class LobbyController {
         return ResponseEntity.ok(ApiResponse.success("Private table created successfully", response));
     }
 
+    @PostMapping("/tables/public")
+    public ResponseEntity<ApiResponse<TableSummaryResponse>> createPublicTable(
+            @CurrentUser String userId,
+            @Valid @RequestBody CreatePrivateTableRequest request) {
+        TableSummaryResponse response = lobbyService.createPublicTable(userId, request);
+        return ResponseEntity.ok(ApiResponse.success("Public table created successfully", response));
+    }
+
     @GetMapping("/tables/private/{inviteCode}")
     public ResponseEntity<ApiResponse<TableSummaryResponse>> getPrivateTableByInviteCode(
             @CurrentUser String userId,

@@ -56,10 +56,10 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
-        // Create zero-balance wallet atomically for new user
+        // Create welcome bonus wallet atomically for new user (10,000 Paise = ₹100)
         Wallet wallet = Wallet.builder()
                 .userId(savedUser.getId())
-                .balancePaise(0L)
+                .balancePaise(10_000L)
                 .currency("INR")
                 .build();
         walletRepository.save(wallet);

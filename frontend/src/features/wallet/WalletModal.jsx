@@ -18,11 +18,12 @@ export default function WalletModal({ isOpen, onClose }) {
 
   const fetchWalletDetails = async () => {
     try {
-      const { data } = await axiosClient.get('/wallet/me');
-      setWalletData(data);
+      const { data: res } = await axiosClient.get('/wallet/me');
+      setWalletData(res?.data || res);
 
       const txRes = await axiosClient.get('/wallet/me/history');
-      setTransactions(txRes.data.content || txRes.data || []);
+      const list = txRes.data?.data?.content || txRes.data?.data || txRes.data?.content || txRes.data;
+      setTransactions(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error('Wallet fetch error:', err);
     }

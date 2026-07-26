@@ -87,10 +87,10 @@ class AuthControllerTest {
         User savedUser = savedUserOpt.get();
         assertTrue(passwordEncoder.matches("Password123", savedUser.getPasswordHash()));
 
-        // Verify Wallet created atomically with balancePaise = 0
+        // Verify Wallet created atomically with welcome bonus balancePaise = 10000
         Optional<Wallet> walletOpt = walletRepository.findByUserId(savedUser.getId());
         assertTrue(walletOpt.isPresent());
-        assertEquals(0L, walletOpt.get().getBalancePaise());
+        assertEquals(10_000L, walletOpt.get().getBalancePaise());
     }
 
     @Test

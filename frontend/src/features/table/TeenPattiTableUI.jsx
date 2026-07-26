@@ -43,13 +43,15 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     };
   }, [tableId, accessToken]);
 
-  const sendPlayerAction = (actionType, raiseMultiplier = 1) => {
+  const sendPlayerAction = (actionType, multiplier = 1) => {
     if (!tableId || actionLoading) return;
     setActionLoading(true);
 
-    wsGameService.sendMessage('GAME_ACTION', tableId, {
-      actionType,
-      raiseMultiplier,
+    const requiredBetPaise = gameState?.requiredBetPaise || 1000;
+    const amountPaise = requiredBetPaise * multiplier;
+
+    wsGameService.sendMessage(actionType, tableId, {
+      amountPaise,
     });
 
     setTimeout(() => setActionLoading(false), 500);
@@ -87,8 +89,20 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             ♠
           </div>
           <div>
-            <h3 className="font-bold text-slate-100 text-sm">Teen Patti Table #{tableId?.slice(-6)}</h3>
-            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-slate-100 text-sm">Teen Patti Table #{tableId?.slice(-6)}</h3>
+              <button
+                onClick={() => {
+                  const codeToCopy = gameState?.inviteCode || tableId;
+                  if (codeToCopy) navigator.clipboard.writeText(codeToCopy);
+                }}
+                className="px-2.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                title="Click to copy Room Code"
+              >
+                Copy Code: {gameState?.inviteCode || tableId?.slice(-6)}
+              </button>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 mt-0.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
               Live WebSocket Sync
             </span>
@@ -109,6 +123,14 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         <div className="w-full max-w-4xl mx-auto h-[420px] rounded-[200px] bg-gradient-to-b from-emerald-800 via-emerald-900 to-emerald-950 border-[10px] border-amber-800/80 shadow-[inset_0_0_80px_rgba(0,0,0,0.8)] relative flex items-center justify-center">
           {/* Inner Felt Border */}
           <div className="absolute inset-4 rounded-[180px] border-2 border-emerald-500/20 pointer-events-none" />
+
+          {/* Waiting for Opponent Overlay */}
+          {players.length < 2 && (
+            <div className="absolute top-8 z-20 bg-slate-900/90 border border-amber-500/30 px-5 py-2 rounded-2xl backdrop-blur-md shadow-xl text-center flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-xs font-bold text-slate-200">Waiting for 2nd player to take seat...</span>
+            </div>
+          )}
 
           {/* Central Pot Display */}
           <div className="text-center z-10 bg-slate-950/80 backdrop-blur-md border border-amber-500/40 px-6 py-4 rounded-3xl shadow-2xl">

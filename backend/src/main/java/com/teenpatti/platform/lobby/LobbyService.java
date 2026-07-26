@@ -36,8 +36,13 @@ public class LobbyService {
     private final WalletService walletService;
     private final StakeTierConfig stakeTierConfig;
     private final InviteCodeGenerator inviteCodeGenerator;
+    private final com.teenpatti.platform.table.DefaultTableInitializer defaultTableInitializer;
 
     public PageResponse<TableSummaryResponse> getPublicTables(StakeTier stakeTier, int page, int size) {
+        if (defaultTableInitializer != null) {
+            defaultTableInitializer.ensureDefaultPublicTables();
+        }
+
         int boundedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int boundedPage = Math.max(page, 0);
         Pageable pageable = PageRequest.of(boundedPage, boundedSize);
@@ -76,6 +81,24 @@ public class LobbyService {
                 .tableId(savedTable.getId())
                 .inviteCode(inviteCode)
                 .build();
+    }
+
+    public TableSummaryResponse createPublicTable(String userId, CreatePrivateTableRequest request) {
+        List<String> initialSeated = new ArrayList<>();
+        initialSeated.add(userId);
+
+        Table table = Table.builder()
+                .tableType(TableType.PUBLIC)
+                .stakeTier(request.getStakeTier())
+                .maxPlayers(request.getMaxPlayers())
+                .seatedPlayerIds(initialSeated)
+                .status(TableStatus.WAITING)
+                .createdAt(Instant.now())
+                .build();
+
+        Table savedTable = tableRepository.save(table);
+        log.info("Created PUBLIC table [{}] by user [{}]", savedTable.getId(), userId);
+        return toTableSummaryResponse(savedTable);
     }
 
     public TableSummaryResponse getPrivateTableByInviteCode(String inviteCode) {

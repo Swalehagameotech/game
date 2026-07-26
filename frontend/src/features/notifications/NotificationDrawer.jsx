@@ -12,11 +12,13 @@ export default function NotificationDrawer({ isOpen, onClose }) {
   const fetchNotifications = async () => {
     setLoading(true);
     try {
-      const { data } = await axiosClient.get('/notifications');
-      setList(data.content || data || []);
+      const { data: res } = await axiosClient.get('/notifications');
+      const list = res?.data?.content || res?.data || res?.content || res;
+      setList(Array.isArray(list) ? list : []);
 
       const countRes = await axiosClient.get('/notifications/unread-count');
-      setUnreadNotificationsCount(countRes.data.unreadCount || 0);
+      const countData = countRes.data?.data || countRes.data;
+      setUnreadNotificationsCount(countData?.unreadCount ?? 0);
     } catch (err) {
       console.error('Failed to fetch notifications:', err);
     } finally {

@@ -13,13 +13,15 @@ export default function AdminModal({ isOpen, onClose }) {
     setLoading(true);
     try {
       if (activeTab === 'WITHDRAWALS') {
-        const { data } = await axiosClient.get('/admin/withdrawals', {
+        const { data: res } = await axiosClient.get('/admin/withdrawals', {
           params: { status: 'PENDING_ADMIN_REVIEW', page: 0, size: 20 },
         });
-        setWithdrawals(data.content || data || []);
+        const list = res?.data?.content || res?.data || res?.content || res;
+        setWithdrawals(Array.isArray(list) ? list : []);
       } else if (activeTab === 'USERS') {
-        const { data } = await axiosClient.get('/admin/users', { params: { page: 0, size: 20 } });
-        setUsers(data.content || data || []);
+        const { data: res } = await axiosClient.get('/admin/users', { params: { page: 0, size: 20 } });
+        const list = res?.data?.content || res?.data || res?.content || res;
+        setUsers(Array.isArray(list) ? list : []);
       }
     } catch (err) {
       console.error('Failed to fetch admin data:', err);

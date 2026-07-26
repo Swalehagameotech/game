@@ -60,12 +60,12 @@ class WebSocketGameService {
     return () => this.listeners.delete(listener);
   }
 
-  sendMessage(type, tableId, payload = {}) {
+  sendMessage(type, tableId, extraData = {}) {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       const msg = {
         type,
         tableId,
-        payload,
+        ...extraData,
       };
       this.socket.send(JSON.stringify(msg));
       return true;

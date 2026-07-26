@@ -11,7 +11,9 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function App() {
   const { isAuthenticated } = useAuth();
-  const [activeTableId, setActiveTableId] = useState(null);
+  const [activeTableId, setActiveTableId] = useState(() => {
+    return localStorage.getItem('activeTableId') || null;
+  });
 
   // Modals state
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -26,10 +28,16 @@ export default function App() {
       return;
     }
     setActiveTableId(tableId);
+    if (tableId) {
+      localStorage.setItem('activeTableId', tableId);
+    } else {
+      localStorage.removeItem('activeTableId');
+    }
   };
 
   const handleLeaveTable = () => {
     setActiveTableId(null);
+    localStorage.removeItem('activeTableId');
   };
 
   return (
@@ -54,7 +62,7 @@ export default function App() {
         {activeTableId ? (
           <TeenPattiTableUI tableId={activeTableId} onLeaveTable={handleLeaveTable} />
         ) : (
-          <LobbyView onJoinTable={handleJoinTable} />
+          <LobbyView onJoinTable={handleJoinTable} onOpenAuth={() => setIsAuthOpen(true)} />
         )}
       </main>
 

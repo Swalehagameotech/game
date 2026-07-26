@@ -15,16 +15,17 @@ export default function LeaderboardModal({ isOpen, onClose }) {
   const fetchLeaderboard = async () => {
     setLoading(true);
     try {
-      const { data } = await axiosClient.get('/leaderboard', {
+      const { data: res } = await axiosClient.get('/leaderboard', {
         params: { window: windowType, metric: metricType, page: 0, size: 20 },
       });
-      setEntries(data.content || data || []);
+      const list = res?.data?.content || res?.data || res?.content || res;
+      setEntries(Array.isArray(list) ? list : []);
 
       if (user) {
         const rankRes = await axiosClient.get('/leaderboard/me', {
           params: { window: windowType, metric: metricType },
         });
-        setMyRank(rankRes.data);
+        setMyRank(rankRes.data?.data || rankRes.data);
       }
     } catch (err) {
       console.error('Failed to fetch leaderboard:', err);

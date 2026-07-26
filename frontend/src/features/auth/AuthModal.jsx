@@ -25,50 +25,72 @@ export default function AuthModal({ isOpen, onClose }) {
 
     try {
       if (isLogin) {
-        const { data } = await axiosClient.post('/auth/login', {
-          usernameOrEmail: formData.usernameOrEmail,
+        const { data: res } = await axiosClient.post('/auth/login', {
+          loginId: formData.usernameOrEmail.trim(),
           password: formData.password,
         });
 
+        const authData = res?.data || res;
+        const userObj = authData.user || {};
+
         login(
           {
-            id: data.userId,
-            username: data.username,
-            displayName: data.displayName,
-            role: data.role,
+            id: userObj.id || authData.userId,
+            email: userObj.email,
+            displayName: userObj.displayName || authData.displayName,
+            role: userObj.role || authData.role,
           },
-          data.accessToken
+          authData.accessToken
         );
-        localStorage.setItem('refreshToken', data.refreshToken);
+        if (authData.refreshToken) {
+          localStorage.setItem('refreshToken', authData.refreshToken);
+        }
         onClose();
       } else {
-        const { data } = await axiosClient.post('/auth/register', {
-          username: formData.usernameOrEmail,
-          email: formData.usernameOrEmail.includes('@') ? formData.usernameOrEmail : `${formData.usernameOrEmail}@example.com`,
+        const rawEmail = formData.usernameOrEmail.trim();
+        const email = rawEmail.includes('@') ? rawEmail : `${rawEmail}@example.com`;
+        const displayName = (formData.displayName || rawEmail).trim();
+        const phoneNumber = (formData.phoneNumber || '+919876543210').trim();
+
+        if (displayName.length < 3 || displayName.length > 20) {
+          setError('Display name must be between 3 and 20 characters.');
+          setLoading(false);
+          return;
+        }
+
+        const { data: res } = await axiosClient.post('/auth/register', {
+          email,
+          phoneNumber,
           password: formData.password,
-          displayName: formData.displayName || formData.usernameOrEmail,
-          phoneNumber: formData.phoneNumber || '+919999999999',
+          displayName,
         });
 
-        const loginRes = await axiosClient.post('/auth/login', {
-          usernameOrEmail: formData.usernameOrEmail,
-          password: formData.password,
-        });
+        const authData = res?.data || res;
+        const userObj = authData.user || {};
 
         login(
           {
-            id: loginRes.data.userId,
-            username: loginRes.data.username,
-            displayName: loginRes.data.displayName,
-            role: loginRes.data.role,
+            id: userObj.id || authData.userId,
+            email: userObj.email,
+            displayName: userObj.displayName || authData.displayName,
+            role: userObj.role || authData.role,
           },
-          loginRes.data.accessToken
+          authData.accessToken
         );
-        localStorage.setItem('refreshToken', loginRes.data.refreshToken);
+        if (authData.refreshToken) {
+          localStorage.setItem('refreshToken', authData.refreshToken);
+        }
         onClose();
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data || 'Authentication failed. Please check credentials.');
+      const resp = err.response?.data;
+      if (resp?.details && Array.isArray(resp.details) && resp.details.length > 0) {
+        setError(resp.details.join('. '));
+      } else if (resp?.message) {
+        setError(resp.message);
+      } else {
+        setError(typeof resp === 'string' ? resp : 'Authentication failed. Please check credentials and password requirements.');
+      }
     } finally {
       setLoading(false);
     }
@@ -78,39 +100,49 @@ export default function AuthModal({ isOpen, onClose }) {
     setLoading(true);
     setError('');
     try {
-      const demoUsername = role === 'ADMIN' ? 'admin_demo' : `player_${Math.floor(1000 + Math.random() * 9000)}`;
-      const demoPass = 'Password123!';
+      const isDemoAdmin = role === 'ADMIN';
+      const demoId = isDemoAdmin ? 'admin_demo' : `player_${Math.floor(10000 + Math.random() * 90000)}`;
+      const demoEmail = `${demoId}@example.com`;
+      const demoPass = 'Password123';
+      const random9Digits = Math.floor(100000000 + Math.random() * 899999999);
+      const demoPhone = isDemoAdmin ? '+919111111111' : `+919${random9Digits}`;
+      const demoDisplay = isDemoAdmin ? 'Admin Manager' : `Player ${demoId.slice(-4)}`;
 
       try {
         await axiosClient.post('/auth/register', {
-          username: demoUsername,
-          email: `${demoUsername}@teenpatti.internal`,
+          email: demoEmail,
+          phoneNumber: demoPhone,
           password: demoPass,
-          displayName: role === 'ADMIN' ? 'Admin Manager' : `Player ${demoUsername.slice(-4)}`,
-          phoneNumber: '+919876543210',
+          displayName: demoDisplay,
         });
       } catch (regErr) {
-        // User might already exist, proceed to login
+        // User might already exist (e.g. for admin_demo), proceed to login
       }
 
-      const { data } = await axiosClient.post('/auth/login', {
-        usernameOrEmail: demoUsername,
+      const { data: res } = await axiosClient.post('/auth/login', {
+        loginId: isDemoAdmin ? 'admin_demo@example.com' : demoEmail,
         password: demoPass,
       });
 
+      const authData = res?.data || res;
+      const userObj = authData.user || {};
+
       login(
         {
-          id: data.userId,
-          username: data.username,
-          displayName: data.displayName,
-          role: data.role,
+          id: userObj.id || authData.userId,
+          email: userObj.email,
+          displayName: userObj.displayName || authData.displayName,
+          role: userObj.role || authData.role,
         },
-        data.accessToken
+        authData.accessToken
       );
-      localStorage.setItem('refreshToken', data.refreshToken);
+      if (authData.refreshToken) {
+        localStorage.setItem('refreshToken', authData.refreshToken);
+      }
       onClose();
     } catch (err) {
-      setError('Guest login failed: ' + (err.response?.data?.message || err.message));
+      const resp = err.response?.data;
+      setError('Guest login failed: ' + (resp?.message || err.message));
     } finally {
       setLoading(false);
     }
