@@ -11,4 +11,6 @@ public interface MatchHistoryRepository extends MongoRepository<MatchHistory, St
     Page<MatchHistory> findByTableIdOrderByEndedAtDesc(String tableId, Pageable pageable);
 
     Page<MatchHistory> findByWinnerIdOrderByEndedAtDesc(String winnerId, Pageable pageable);
+
+    Page<MatchHistory> findByPlayerIdsContainingOrderByEndedAtDesc(String userId, Pageable pageable);
 }

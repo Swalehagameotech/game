@@ -132,9 +132,9 @@ export default function AuthModal({ isOpen, onClose }) {
           displayName: userObj.displayName || authData.displayName,
           role: isDemoAdmin ? 'ADMIN' : (userObj.role || authData.role),
         },
-        authData.accessToken
+        authData.accessToken,
+        authData.refreshToken
       );
-      localStorage.setItem('refreshToken', authData.refreshToken || authData.accessToken);
       onClose();
     } catch (err) {
       const resp = err.response?.data;

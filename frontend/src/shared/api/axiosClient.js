@@ -56,6 +56,10 @@ axiosClient.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken') || localStorage.getItem('accessToken');
       if (!refreshToken) {
         isRefreshing = false;
+        localStorage.removeItem('user');
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        window.dispatchEvent(new Event('auth:unauthorized'));
         return Promise.reject(error);
       }
 
@@ -74,6 +78,10 @@ axiosClient.interceptors.response.use(
         return axiosClient(originalRequest);
       } catch (refreshErr) {
         processQueue(refreshErr, null);
+        localStorage.removeItem('user');
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        window.dispatchEvent(new Event('auth:unauthorized'));
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;

@@ -39,6 +39,10 @@ public class LobbyService {
     private final com.teenpatti.platform.table.DefaultTableInitializer defaultTableInitializer;
     private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
 
+    public List<TableSummaryResponse> getPublicTables() {
+        return getPublicTables(null, 0, 50).getContent();
+    }
+
     public PageResponse<TableSummaryResponse> getPublicTables(StakeTier stakeTier, int page, int size) {
         if (defaultTableInitializer != null) {
             defaultTableInitializer.ensureDefaultPublicTables();

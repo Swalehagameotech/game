@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import axiosClient from '@/shared/api/axiosClient';
 
 const AuthContext = createContext(null);
 
@@ -13,22 +14,84 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     if (user) {
       localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('user');
     }
   }, [user]);
 
   useEffect(() => {
     if (accessToken) {
       localStorage.setItem('accessToken', accessToken);
-    } else {
-      localStorage.removeItem('accessToken');
     }
   }, [accessToken]);
 
-  const login = (userData, token) => {
+  // Auto-create demo player session on first visit if not logged in
+  useEffect(() => {
+    if (!accessToken) {
+      const autoGuestLogin = async () => {
+        try {
+          const rand = Math.floor(100000 + Math.random() * 900000);
+          const demoEmail = `player_${rand}@example.com`;
+          const demoPhone = `+919${Math.floor(100000000 + Math.random() * 899999999)}`;
+          const demoPass = 'Password123';
+          const demoDisplay = `Player_${rand.toString().slice(-4)}`;
+
+          try {
+            await axiosClient.post('/auth/register', {
+              email: demoEmail,
+              phoneNumber: demoPhone,
+              password: demoPass,
+              displayName: demoDisplay,
+            });
+          } catch (e) {
+            // User might already exist
+          }
+
+          const { data: res } = await axiosClient.post('/auth/login', {
+            loginId: demoEmail,
+            password: demoPass,
+          });
+
+          const authData = res?.data || res;
+          const userObj = authData.user || {};
+
+          login(
+            {
+              id: userObj.id || authData.userId,
+              email: userObj.email,
+              displayName: userObj.displayName || authData.displayName,
+              role: userObj.role || authData.role || 'PLAYER',
+            },
+            authData.accessToken,
+            authData.refreshToken
+          );
+        } catch (err) {
+          console.error('Auto guest login failed:', err);
+        }
+      };
+
+      autoGuestLogin();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      setAccessToken(null);
+      localStorage.removeItem('user');
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+    };
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
+
+  const login = (userData, token, refreshToken = null) => {
     setUser(userData);
     setAccessToken(token);
+    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('accessToken', token);
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken);
+    }
   };
 
   const logout = () => {
@@ -36,7 +99,28 @@ export const AuthProvider = ({ children }) => {
     setAccessToken(null);
     localStorage.removeItem('user');
     localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
   };
+
+  const refreshWalletBalance = async () => {
+    if (!accessToken) return;
+    try {
+      const { data: res } = await axiosClient.get('/wallet/me');
+      const data = res?.data || res;
+      if (data && (data.balancePaise !== undefined || data.walletBalance !== undefined)) {
+        const bal = data.balancePaise !== undefined ? data.balancePaise : data.walletBalance;
+        setUser((prev) => (prev ? { ...prev, walletBalance: bal, balancePaise: bal } : prev));
+      }
+    } catch (err) {
+      // Ignore wallet fetch errors if unauthenticated
+    }
+  };
+
+  useEffect(() => {
+    if (accessToken) {
+      refreshWalletBalance();
+    }
+  }, [accessToken]);
 
   const updateUserProfile = (updatedFields) => {
     setUser((prev) => (prev ? { ...prev, ...updatedFields } : null));
@@ -51,6 +135,7 @@ export const AuthProvider = ({ children }) => {
         login,
         logout,
         updateUserProfile,
+        refreshWalletBalance,
       }}
     >
       {children}

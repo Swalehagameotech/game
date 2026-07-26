@@ -82,6 +82,14 @@ public class User {
         this.phoneNumber = mobile;
     }
 
+    public long getWalletBalancePaise() {
+        return walletBalance;
+    }
+
+    public void setWalletBalancePaise(long walletBalancePaise) {
+        this.walletBalance = walletBalancePaise;
+    }
+
     public String getStatus() {
         return accountStatus != null ? accountStatus.name() : "ACTIVE";
     }

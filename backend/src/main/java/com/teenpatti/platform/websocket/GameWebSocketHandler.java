@@ -118,6 +118,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             }
 
             sessionRegistry.attachUserToTable(userId, tableId);
+            disconnectGracePeriodManager.handleReconnect(userId);
 
             // If table has >= 2 players and no active engine, initialize and start hand
             if (table.getSeatedPlayerIds().size() >= 2 && !activeEngines.containsKey(tableId)) {
