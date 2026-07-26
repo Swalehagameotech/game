@@ -1,0 +1,100 @@
+name: Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ==========================================
+  # STAGE 1: Automated Test Gates
+  # ==========================================
+  test-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Start MongoDB Test Container
+        run: |
+          docker run -d --name mongo-test -p 27017:27017 mongo:7.0 mongod --replSet rs0 --bind_ip_all
+          sleep 3
+          docker exec mongo-test mongosh --eval 'rs.initiate()'
+
+      - name: Run Backend Concurrency & Unit Tests (Phases 1-16)
+        working-directory: ./backend
+        run: ./mvnw test -B
+
+  # ==========================================
+  # STAGE 2: Build & Push Docker Images
+  # ==========================================
+  build-and-push:
+    needs: test-gate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build & Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./infra/docker/Dockerfile.backend
+          push: true
+          tags: |
+            teenpatti/backend:latest
+            teenpatti/backend:${{ github.sha }}
+
+      - name: Build & Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./infra/docker/Dockerfile.frontend
+          push: true
+          tags: |
+            teenpatti/frontend:latest
+            teenpatti/frontend:${{ github.sha }}
+
+  # ==========================================
+  # STAGE 3: Deploy to Staging & Smoke Test
+  # ==========================================
+  deploy-staging:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Kubernetes Staging Cluster
+        run: |
+          kubectl apply -f infra/k8s/secrets.yaml
+          kubectl apply -f infra/k8s/backend-deployment.yaml
+          kubectl apply -f infra/k8s/backend-service.yaml
+          kubectl apply -f infra/k8s/frontend-deployment.yaml
+          kubectl apply -f infra/k8s/frontend-service.yaml
+          kubectl apply -f infra/k8s/ingress.yaml
+          kubectl rollout status deployment/backend-deployment --timeout=120s
+
+      - name: Run Staging Health & Smoke Test
+        run: |
+          curl -f http://staging.teenpatti.internal/actuator/health || exit 1
+
+  # ==========================================
+  # STAGE 4: Manual Rollback Runbook (Documented Action)
+  # ==========================================
+  # ROLLBACK INSTRUCTIONS:
+  # In case of production anomaly, run:
+  # kubectl rollout undo deployment/backend-deployment
+  # kubectl rollout undo deployment/frontend-deployment

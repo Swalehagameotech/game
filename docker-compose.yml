@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  # MongoDB Single-Node Replica Set Service
+  # WHY REPLICA SET IS REQUIRED FROM DAY ONE:
+  # MongoDB multi-document ACID transactions (used in future wallet operations, chip transfers,
+  # and atomicity during game pot payouts) MANDATE a replica set deployment.
+  # Running MongoDB as a single-node replica set from Phase 1 prevents local infrastructure
+  # refactoring when transaction capabilities are implemented in subsequent phases.
+  mongodb:
+    image: mongo:7.0
+    container_name: teenpatti-mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: teenpatti_db
+    entrypoint: [ "mongod", "--replSet", "rs0", "--bind_ip_all" ]
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
+    driver: local

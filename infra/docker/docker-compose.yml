@@ -1,0 +1,139 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # MongoDB 3-Node Replica Set (rs0)
+  # ==========================================
+  mongo-1:
+    image: mongo:7.0
+    container_name: mongo-1
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+
+  mongo-2:
+    image: mongo:7.0
+    container_name: mongo-2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+
+  mongo-3:
+    image: mongo:7.0
+    container_name: mongo-3
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+
+  mongo-init:
+    image: mongo:7.0
+    depends_on:
+      - mongo-1
+      - mongo-2
+      - mongo-3
+    restart: on-failure
+    entrypoint: [ "bash", "-c", "sleep 3 && mongosh --host mongo-1:27017 --eval 'rs.initiate({_id: \"rs0\", members: [{_id: 0, host: \"mongo-1:27017\"}, {_id: 1, host: \"mongo-2:27017\"}, {_id: 2, host: \"mongo-3:27017\"}]})'" ]
+
+  # ==========================================
+  # Redis Cache & WebSocket Pub/Sub Cluster
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  # ==========================================
+  # Apache Kafka Event Streaming Platform
+  # ==========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # ==========================================
+  # Backend Spring Boot Multi-Instance Cluster
+  # ==========================================
+  backend-1:
+    build:
+      context: ../../backend
+      dockerfile: ../infra/docker/Dockerfile.backend
+    container_name: backend-1
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongo-1:27017,mongo-2:27017,mongo-3:27017/teenpatti_db?replicaSet=rs0
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_JWT_SECRET: superSecretJwtSigningKeyForProductionDeploymentsMustBeAtLeast32BytesLong123456
+    depends_on:
+      - mongo-init
+      - redis
+      - kafka
+
+  backend-2:
+    build:
+      context: ../../backend
+      dockerfile: ../infra/docker/Dockerfile.backend
+    container_name: backend-2
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongo-1:27017,mongo-2:27017,mongo-3:27017/teenpatti_db?replicaSet=rs0
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      APP_JWT_SECRET: superSecretJwtSigningKeyForProductionDeploymentsMustBeAtLeast32BytesLong123456
+    depends_on:
+      - mongo-init
+      - redis
+      - kafka
+
+  # ==========================================
+  # Frontend Static Application Server
+  # ==========================================
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: ../infra/docker/Dockerfile.frontend
+    container_name: frontend
+
+  # ==========================================
+  # Nginx Reverse Proxy & Load Balancer
+  # ==========================================
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_lb
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend-1
+      - backend-2
+      - frontend
+
+volumes:
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
