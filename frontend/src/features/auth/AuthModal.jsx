@@ -101,12 +101,12 @@ export default function AuthModal({ isOpen, onClose }) {
     setError('');
     try {
       const isDemoAdmin = role === 'ADMIN';
-      const demoId = isDemoAdmin ? 'admin_demo' : `player_${Math.floor(10000 + Math.random() * 90000)}`;
-      const demoEmail = `${demoId}@example.com`;
+      const randomId = Math.floor(100000 + Math.random() * 900000);
+      const demoEmail = isDemoAdmin ? `admin_${randomId}@example.com` : `player_${randomId}@example.com`;
       const demoPass = 'Password123';
       const random9Digits = Math.floor(100000000 + Math.random() * 899999999);
-      const demoPhone = isDemoAdmin ? '+919111111111' : `+919${random9Digits}`;
-      const demoDisplay = isDemoAdmin ? 'Admin Manager' : `Player ${demoId.slice(-4)}`;
+      const demoPhone = `+919${random9Digits}`;
+      const demoDisplay = isDemoAdmin ? `Admin Manager ${randomId.toString().slice(-3)}` : `Player ${randomId.toString().slice(-4)}`;
 
       try {
         await axiosClient.post('/auth/register', {
@@ -116,11 +116,11 @@ export default function AuthModal({ isOpen, onClose }) {
           displayName: demoDisplay,
         });
       } catch (regErr) {
-        // User might already exist (e.g. for admin_demo), proceed to login
+        // Fallback in case user exists
       }
 
       const { data: res } = await axiosClient.post('/auth/login', {
-        loginId: isDemoAdmin ? 'admin_demo@example.com' : demoEmail,
+        loginId: demoEmail,
         password: demoPass,
       });
 
@@ -132,7 +132,7 @@ export default function AuthModal({ isOpen, onClose }) {
           id: userObj.id || authData.userId,
           email: userObj.email,
           displayName: userObj.displayName || authData.displayName,
-          role: userObj.role || authData.role,
+          role: isDemoAdmin ? 'ADMIN' : (userObj.role || authData.role),
         },
         authData.accessToken
       );
@@ -142,7 +142,7 @@ export default function AuthModal({ isOpen, onClose }) {
       onClose();
     } catch (err) {
       const resp = err.response?.data;
-      setError('Guest login failed: ' + (resp?.message || err.message));
+      setError('Guest login failed: ' + (resp?.message || err.message || 'Make sure backend server on port 8080 is running.'));
     } finally {
       setLoading(false);
     }
