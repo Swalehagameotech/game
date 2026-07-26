@@ -37,6 +37,30 @@ public class TableService {
     private final UserRepository userRepository;
     private final WalletService walletService;
     private final StakeTierConfig stakeTierConfig;
+    private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
+
+    public List<Table> getTablesByStatus(TableStatus status) {
+        return tableRepository.findByStatus(status);
+    }
+
+    public List<Table> getTablesByTypeAndStatus(TableType type, TableStatus status) {
+        return tableRepository.findByTableTypeAndStatus(type, status);
+    }
+
+    public List<Table> getActiveJoinableTables() {
+        return tableRepository.findAll().stream()
+                .filter(t -> t.getStatus() == TableStatus.WAITING || t.getStatus() == TableStatus.IN_PROGRESS)
+                .toList();
+    }
+
+    public void deleteTable(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+        table.setStatus(TableStatus.CLOSED);
+        tableRepository.save(table);
+        webSocketEventPublisher.publishTableDeleted(tableId);
+        log.info("User/Admin [{}] deleted table [{}]", userId, tableId);
+    }
 
     /**
      * Atomically claims a seat at a table, debits the buy-in from the user's wallet,
@@ -93,6 +117,8 @@ public class TableService {
         log.info("User [{}] successfully seated at table [{}] at seat index [{}] with held buy-in {} paise",
                 userId, tableId, seatIndex, buyInAmountPaise);
 
+        webSocketEventPublisher.publishPlayerJoined(tableId, userId, claimedTable.getSeatedPlayerIds().size());
+
         return JoinTableResponse.builder()
                 .tableId(tableId)
                 .seatIndex(seatIndex)
@@ -116,6 +142,8 @@ public class TableService {
         long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(initialTable.getStakeTier());
 
         executeAtomicLeave(userId, tableId);
+        int updatedCount = Math.max(0, initialTable.getSeatedPlayerIds().size() - 1);
+        webSocketEventPublisher.publishPlayerLeft(tableId, userId, updatedCount);
 
         if (currentStatus == TableStatus.WAITING) {
             // Full refund

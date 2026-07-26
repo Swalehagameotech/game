@@ -42,4 +42,42 @@ public class TableController {
         TableDetailResponse response = tableService.getTableDetails(userId, tableId);
         return ResponseEntity.ok(ApiResponse.success("Table details retrieved successfully", response));
     }
+
+    @GetMapping("/running")
+    public ResponseEntity<ApiResponse<java.util.List<Table>>> getRunningTables() {
+        java.util.List<Table> tables = tableService.getTablesByStatus(TableStatus.IN_PROGRESS);
+        return ResponseEntity.ok(ApiResponse.success(tables));
+    }
+
+    @GetMapping("/waiting")
+    public ResponseEntity<ApiResponse<java.util.List<Table>>> getWaitingTables() {
+        java.util.List<Table> tables = tableService.getTablesByStatus(TableStatus.WAITING);
+        return ResponseEntity.ok(ApiResponse.success(tables));
+    }
+
+    @GetMapping("/public")
+    public ResponseEntity<ApiResponse<java.util.List<Table>>> getPublicTables() {
+        java.util.List<Table> tables = tableService.getTablesByTypeAndStatus(TableType.PUBLIC, TableStatus.WAITING);
+        return ResponseEntity.ok(ApiResponse.success(tables));
+    }
+
+    @GetMapping("/private")
+    public ResponseEntity<ApiResponse<java.util.List<Table>>> getPrivateTables() {
+        java.util.List<Table> tables = tableService.getTablesByTypeAndStatus(TableType.PRIVATE, TableStatus.WAITING);
+        return ResponseEntity.ok(ApiResponse.success(tables));
+    }
+
+    @GetMapping("/active")
+    public ResponseEntity<ApiResponse<java.util.List<Table>>> getActiveTables() {
+        java.util.List<Table> activeTables = tableService.getActiveJoinableTables();
+        return ResponseEntity.ok(ApiResponse.success(activeTables));
+    }
+
+    @DeleteMapping("/{tableId}")
+    public ResponseEntity<ApiResponse<String>> deleteTable(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        tableService.deleteTable(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Table deleted successfully"));
+    }
 }

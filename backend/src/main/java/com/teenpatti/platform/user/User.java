@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -50,9 +51,38 @@ public class User {
     @Builder.Default
     private UserRole role = UserRole.PLAYER;
 
+    @Builder.Default
+    private long walletBalance = 0L;
+
+    @Builder.Default
+    private boolean isOnline = false;
+
+    @Version
+    private Long version;
+
     @CreatedDate
     private Instant createdAt;
 
     @LastModifiedDate
     private Instant updatedAt;
+
+    public String getName() {
+        return displayName;
+    }
+
+    public void setName(String name) {
+        this.displayName = name;
+    }
+
+    public String getMobile() {
+        return phoneNumber;
+    }
+
+    public void setMobile(String mobile) {
+        this.phoneNumber = mobile;
+    }
+
+    public String getStatus() {
+        return accountStatus != null ? accountStatus.name() : "ACTIVE";
+    }
 }

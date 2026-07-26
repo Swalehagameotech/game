@@ -6,12 +6,19 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface TableRepository extends MongoRepository<Table, String> {
 
     Optional<Table> findByInviteCode(String inviteCode);
+
+    List<Table> findByStatus(TableStatus status);
+
+    long countByStatus(TableStatus status);
+
+    List<Table> findByTableTypeAndStatus(TableType tableType, TableStatus status);
 
     @Query("{ 'tableType': 'PUBLIC', 'status': { '$in': ['WAITING', 'IN_PROGRESS'] }, '$expr': { '$lt': [ { '$size': '$seatedPlayerIds' }, '$maxPlayers' ] } }")
     Page<Table> findAvailablePublicTables(Pageable pageable);

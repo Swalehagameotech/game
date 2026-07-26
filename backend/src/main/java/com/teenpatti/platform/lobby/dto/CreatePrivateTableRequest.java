@@ -15,10 +15,20 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreatePrivateTableRequest {
 
+    private String tableName;
+
+    private String tableType; // PUBLIC or PRIVATE
+
     @NotNull(message = "stakeTier is required")
-    private StakeTier stakeTier;
+    @Builder.Default
+    private StakeTier stakeTier = StakeTier.LOW;
 
     @Min(value = 2, message = "maxPlayers must be at least 2")
     @Max(value = 6, message = "maxPlayers cannot exceed 6")
-    private int maxPlayers;
+    @Builder.Default
+    private int maxPlayers = 6;
+
+    private Long bootAmount;
+
+    private String gameVariant; // HIGHER, MEDIUM, LOWER
 }

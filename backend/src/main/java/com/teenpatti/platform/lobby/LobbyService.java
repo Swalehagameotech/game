@@ -37,6 +37,7 @@ public class LobbyService {
     private final StakeTierConfig stakeTierConfig;
     private final InviteCodeGenerator inviteCodeGenerator;
     private final com.teenpatti.platform.table.DefaultTableInitializer defaultTableInitializer;
+    private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
 
     public PageResponse<TableSummaryResponse> getPublicTables(StakeTier stakeTier, int page, int size) {
         if (defaultTableInitializer != null) {
@@ -63,10 +64,28 @@ public class LobbyService {
         List<String> initialSeated = new ArrayList<>();
         initialSeated.add(userId);
 
+        long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
+                ? request.getBootAmount() 
+                : stakeTierConfig.getMinBuyInPaise(request.getStakeTier());
+
+        String name = request.getTableName() != null && !request.getTableName().isBlank() 
+                ? request.getTableName() 
+                : "Teen Patti Private #" + inviteCode;
+
+        com.teenpatti.platform.table.GameVariant variant = com.teenpatti.platform.table.GameVariant.HIGHER;
+        if (request.getGameVariant() != null) {
+            try { variant = com.teenpatti.platform.table.GameVariant.valueOf(request.getGameVariant().toUpperCase()); } catch (Exception ignored) {}
+        }
+
         Table table = Table.builder()
+                .tableName(name)
+                .hostId(userId)
                 .tableType(TableType.PRIVATE)
+                .visibility("PRIVATE")
                 .stakeTier(request.getStakeTier())
-                .maxPlayers(request.getMaxPlayers())
+                .gameVariant(variant)
+                .bootAmountPaise(bootPaise)
+                .maxPlayers(request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6)
                 .inviteCode(inviteCode)
                 .seatedPlayerIds(initialSeated)
                 .status(TableStatus.WAITING)
@@ -74,8 +93,11 @@ public class LobbyService {
                 .build();
 
         Table savedTable = tableRepository.save(table);
-        log.info("Created PRIVATE table [{}] with inviteCode [{}] by user [{}]",
+        log.info("Created PRIVATE table [{}] with inviteCode [{}] by host [{}]",
                 savedTable.getId(), inviteCode, userId);
+
+        TableSummaryResponse summary = toTableSummaryResponse(savedTable);
+        webSocketEventPublisher.publishTableCreated(summary);
 
         return PrivateTableCreatedResponse.builder()
                 .tableId(savedTable.getId())
@@ -87,18 +109,40 @@ public class LobbyService {
         List<String> initialSeated = new ArrayList<>();
         initialSeated.add(userId);
 
+        long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
+                ? request.getBootAmount() 
+                : stakeTierConfig.getMinBuyInPaise(request.getStakeTier());
+
+        String name = request.getTableName() != null && !request.getTableName().isBlank() 
+                ? request.getTableName() 
+                : "Teen Patti Public Table";
+
+        com.teenpatti.platform.table.GameVariant variant = com.teenpatti.platform.table.GameVariant.HIGHER;
+        if (request.getGameVariant() != null) {
+            try { variant = com.teenpatti.platform.table.GameVariant.valueOf(request.getGameVariant().toUpperCase()); } catch (Exception ignored) {}
+        }
+
         Table table = Table.builder()
+                .tableName(name)
+                .hostId(userId)
                 .tableType(TableType.PUBLIC)
+                .visibility("PUBLIC")
                 .stakeTier(request.getStakeTier())
-                .maxPlayers(request.getMaxPlayers())
+                .gameVariant(variant)
+                .bootAmountPaise(bootPaise)
+                .maxPlayers(request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6)
                 .seatedPlayerIds(initialSeated)
                 .status(TableStatus.WAITING)
                 .createdAt(Instant.now())
                 .build();
 
         Table savedTable = tableRepository.save(table);
-        log.info("Created PUBLIC table [{}] by user [{}]", savedTable.getId(), userId);
-        return toTableSummaryResponse(savedTable);
+        log.info("Created PUBLIC table [{}] by host [{}]", savedTable.getId(), userId);
+
+        TableSummaryResponse summary = toTableSummaryResponse(savedTable);
+        webSocketEventPublisher.publishTableCreated(summary);
+
+        return summary;
     }
 
     public TableSummaryResponse getPrivateTableByInviteCode(String inviteCode) {
@@ -129,7 +173,7 @@ public class LobbyService {
             return EligibilityCheckResponse.ineligible("TABLE_FULL", null, null);
         }
 
-        long minRequiredPaise = stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
+        long minRequiredPaise = table.getBootAmountPaise() > 0 ? table.getBootAmountPaise() : stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
         WalletBalanceResponse balanceResponse = walletService.getBalance(userId);
         long currentBalancePaise = balanceResponse.getBalancePaise();
 
@@ -144,11 +188,22 @@ public class LobbyService {
 
     private TableSummaryResponse toTableSummaryResponse(Table table) {
         int playerCount = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
+        long bootAmount = table.getBootAmountPaise() > 0 ? table.getBootAmountPaise() : stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
+        String name = table.getTableName() != null && !table.getTableName().isBlank() 
+                ? table.getTableName() 
+                : "Teen Patti " + (table.getTableType() != null ? table.getTableType().name() : "PUBLIC");
+        String variant = table.getGameVariant() != null ? table.getGameVariant().name() : "HIGHER";
+
         return TableSummaryResponse.builder()
                 .tableId(table.getId())
+                .tableName(name)
+                .hostId(table.getHostId())
                 .stakeTier(table.getStakeTier())
                 .maxPlayers(table.getMaxPlayers())
                 .currentPlayerCount(playerCount)
+                .bootAmount(bootAmount)
+                .gameVariant(variant)
+                .visibility(table.getVisibility() != null ? table.getVisibility() : (table.getTableType() != null ? table.getTableType().name() : "PUBLIC"))
                 .status(table.getStatus())
                 .tableType(table.getTableType())
                 .build();

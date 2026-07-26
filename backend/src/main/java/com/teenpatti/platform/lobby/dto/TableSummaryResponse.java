@@ -14,9 +14,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TableSummaryResponse {
     private String tableId;
+    private String tableName;
+    private String hostId;
     private StakeTier stakeTier;
     private int maxPlayers;
     private int currentPlayerCount;
+    private long bootAmount;
+    private String gameVariant;
+    private String visibility;
     private TableStatus status;
     private TableType tableType;
 }

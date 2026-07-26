@@ -5,6 +5,7 @@ package com.teenpatti.platform.user;
  */
 public enum AccountStatus {
     ACTIVE,
+    BLOCKED,
     SUSPENDED,
     BANNED
 }

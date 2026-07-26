@@ -36,11 +36,24 @@ public class Table {
     @Id
     private String id;
 
+    private String tableName;
+
+    private String hostId;
+
     @Builder.Default
     private TableType tableType = TableType.PUBLIC;
 
     @Builder.Default
+    private String visibility = "PUBLIC";
+
+    @Builder.Default
     private StakeTier stakeTier = StakeTier.LOW;
+
+    @Builder.Default
+    private GameVariant gameVariant = GameVariant.HIGHER;
+
+    @Builder.Default
+    private long bootAmountPaise = 1000L;
 
     private int maxPlayers;
 
@@ -52,7 +65,7 @@ public class Table {
 
     /**
      * List of user IDs who left the table while a hand was IN_PROGRESS.
-     * Consumed by Phase 10's game engine to treat as folded/removed from active hand.
+     * Consumed by game engine to treat as folded/removed from active hand.
      */
     @Builder.Default
     private List<String> leftMidHandPlayerIds = new ArrayList<>();
@@ -70,4 +83,22 @@ public class Table {
 
     @CreatedDate
     private Instant createdAt;
+
+    private Instant updatedAt;
+
+    public String getTableId() {
+        return id;
+    }
+
+    public List<String> getPlayers() {
+        return seatedPlayerIds;
+    }
+
+    public int getPlayerCount() {
+        return seatedPlayerIds != null ? seatedPlayerIds.size() : 0;
+    }
+
+    public long getBootAmount() {
+        return bootAmountPaise;
+    }
 }
