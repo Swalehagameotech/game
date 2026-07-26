@@ -119,12 +119,50 @@ public class TableService {
 
         webSocketEventPublisher.publishPlayerJoined(tableId, userId, claimedTable.getSeatedPlayerIds().size());
 
+        // Auto-start condition (Model 1): As soon as minimum required players (3) have seated
+        int minReq = claimedTable.getMinPlayers() > 0 ? claimedTable.getMinPlayers() : 3;
+        if (claimedTable.getStatus() == TableStatus.WAITING && claimedTable.getSeatedPlayerIds().size() >= minReq) {
+            claimedTable.setStatus(TableStatus.IN_PROGRESS);
+            claimedTable.setUpdatedAt(Instant.now());
+            claimedTable = tableRepository.save(claimedTable);
+            log.info("Minimum required players [{}] reached on table [{}]. Automatically transitioning to IN_PROGRESS!", minReq, tableId);
+            webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(claimedTable));
+        }
+
         return JoinTableResponse.builder()
                 .tableId(tableId)
                 .seatIndex(seatIndex)
                 .heldBuyInPaise(buyInAmountPaise)
                 .tableDetail(buildTableDetailResponse(claimedTable))
                 .build();
+    }
+
+    /**
+     * Manually starts the game round when minimum required players (e.g. 3) have seated (Option 2).
+     */
+    public TableDetailResponse startGame(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+
+        if (table.getStatus() != TableStatus.WAITING) {
+            throw new IllegalStateException("Game is already in progress or closed");
+        }
+
+        int seatedCount = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
+        int minRequired = table.getMinPlayers() > 0 ? table.getMinPlayers() : 3;
+
+        if (seatedCount < minRequired) {
+            throw new IllegalStateException("Minimum " + minRequired + " players required to start game. Current seated: " + seatedCount);
+        }
+
+        table.setStatus(TableStatus.IN_PROGRESS);
+        table.setUpdatedAt(Instant.now());
+        Table saved = tableRepository.save(table);
+
+        log.info("Host/Player [{}] manually started game on table [{}] with [{}] players", userId, tableId, seatedCount);
+        webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(saved));
+
+        return buildTableDetailResponse(saved);
     }
 
     /**

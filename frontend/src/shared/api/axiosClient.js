@@ -53,10 +53,9 @@ axiosClient.interceptors.response.use(
       originalRequest._retry = true;
       isRefreshing = true;
 
-      const refreshToken = localStorage.getItem('refreshToken');
+      const refreshToken = localStorage.getItem('refreshToken') || localStorage.getItem('accessToken');
       if (!refreshToken) {
         isRefreshing = false;
-        localStorage.clear();
         return Promise.reject(error);
       }
 
@@ -75,8 +74,6 @@ axiosClient.interceptors.response.use(
         return axiosClient(originalRequest);
       } catch (refreshErr) {
         processQueue(refreshErr, null);
-        localStorage.clear();
-        window.dispatchEvent(new Event('auth:unauthorized'));
         return Promise.reject(refreshErr);
       } finally {
         isRefreshing = false;

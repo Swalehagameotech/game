@@ -27,6 +27,14 @@ public class TableController {
         return ResponseEntity.ok(ApiResponse.success("Successfully joined table", response));
     }
 
+    @PostMapping("/{tableId}/start")
+    public ResponseEntity<ApiResponse<TableDetailResponse>> startGame(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        TableDetailResponse response = tableService.startGame(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Game manually started successfully", response));
+    }
+
     @PostMapping("/{tableId}/leave")
     public ResponseEntity<ApiResponse<LeaveTableResponse>> leaveTable(
             @CurrentUser String userId,

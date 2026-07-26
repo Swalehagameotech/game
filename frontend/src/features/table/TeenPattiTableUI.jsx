@@ -24,23 +24,27 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    if (!accessToken || !tableId) return;
+    if (!tableId) return;
 
-    // Connect to WebSocket and join game table
-    wsGameService.connect(accessToken, (message) => {
-      if (message.type === 'GAME_STATE_UPDATE' || message.type === 'STATE_UPDATE') {
-        updateGameState(message.payload || message.state);
-      }
-    });
+    // Fetch initial table state immediately via REST API
+    axiosClient.get(`/tables/${tableId}`).then((res) => {
+      const data = res.data?.data || res.data;
+      if (data) updateGameState(data);
+    }).catch((err) => console.error('Error fetching table details:', err));
 
-    // Send JOIN_TABLE message
-    const timer = setTimeout(() => {
-      wsGameService.sendMessage('JOIN_TABLE', tableId, {});
-    }, 500);
+    if (accessToken) {
+      wsGameService.connect(accessToken, (message) => {
+        if (message.type === 'GAME_STATE_UPDATE' || message.type === 'STATE_UPDATE') {
+          updateGameState(message.payload || message.state);
+        }
+      });
 
-    return () => {
-      clearTimeout(timer);
-    };
+      const timer = setTimeout(() => {
+        wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
   }, [tableId, accessToken]);
 
   const sendPlayerAction = (actionType, multiplier = 1) => {
@@ -68,7 +72,16 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     }
   };
 
-  const players = gameState?.players || [];
+  const seatedIds = gameState?.seatedPlayerIds || gameState?.seatedPlayers || [];
+  const rawPlayers = gameState?.players || [];
+  const players = rawPlayers.length > 0
+    ? rawPlayers
+    : seatedIds.map((id, index) => ({
+        userId: id,
+        displayName: id === user?.id ? (user?.displayName || 'You') : `Player ${index + 1}`,
+        status: 'BLIND',
+        cards: [],
+      }));
   const currentTurnUserId = gameState?.currentTurnPlayerId;
   const isMyTurn = currentTurnUserId === user?.id;
   const myPlayer = players.find((p) => p.userId === user?.id);
@@ -124,13 +137,19 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           {/* Inner Felt Border */}
           <div className="absolute inset-4 rounded-[180px] border-2 border-emerald-500/20 pointer-events-none" />
 
-          {/* Waiting for Opponent Overlay */}
-          {players.length < 2 && (
-            <div className="absolute top-8 z-20 bg-slate-900/90 border border-amber-500/30 px-5 py-2 rounded-2xl backdrop-blur-md shadow-xl text-center flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
-              <span className="text-xs font-bold text-slate-200">Waiting for 2nd player to take seat...</span>
+          {/* Model 1: Dynamic Status Banner (Auto-starts when 3 players join) */}
+          <div className="absolute top-8 z-20 bg-slate-900/90 border border-amber-500/30 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-xl text-center flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className={`w-2.5 h-2.5 rounded-full ${gameState?.status === 'IN_PROGRESS' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
+              <span className="text-xs font-bold text-slate-200">
+                {gameState?.status === 'IN_PROGRESS'
+                  ? `♠ Game Active (${players.length}/6 Players) • Hand in Progress ♠`
+                  : players.length < 3
+                  ? `${players.length}/6 Players Seated • Waiting for ${3 - players.length} more player(s) to auto-start...`
+                  : `${players.length}/6 Players Seated • Starting Game Match...`}
+              </span>
             </div>
-          )}
+          </div>
 
           {/* Central Pot Display */}
           <div className="text-center z-10 bg-slate-950/80 backdrop-blur-md border border-amber-500/40 px-6 py-4 rounded-3xl shadow-2xl">

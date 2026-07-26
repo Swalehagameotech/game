@@ -97,17 +97,6 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             String tableId = sessionRegistry.getTableIdForUser(userId);
             sessionRegistry.unregisterUserSession(userId);
             if (tableId != null) {
-                perTableActionExecutor.executeTableActionSync(tableId, () -> {
-                    tableRepository.findById(tableId).ifPresent(table -> {
-                        if (table.getStatus() == TableStatus.WAITING && table.getSeatedPlayerIds() != null) {
-                            if (table.getSeatedPlayerIds().remove(userId)) {
-                                tableRepository.save(table);
-                                log.info("Removed disconnected ghost user [{}] from WAITING table [{}]", userId, tableId);
-                                broadcastPlayerProjections(tableId);
-                            }
-                        }
-                    });
-                });
                 disconnectGracePeriodManager.handleDisconnect(userId, tableId, () -> handleAutoFoldOnTurn(userId, tableId));
             }
         }

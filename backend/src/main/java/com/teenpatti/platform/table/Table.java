@@ -55,7 +55,11 @@ public class Table {
     @Builder.Default
     private long bootAmountPaise = 1000L;
 
-    private int maxPlayers;
+    @Builder.Default
+    private int minPlayers = 3;
+
+    @Builder.Default
+    private int maxPlayers = 6;
 
     @Indexed(unique = true, sparse = true)
     private String inviteCode;

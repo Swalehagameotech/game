@@ -27,34 +27,12 @@ public class DefaultTableInitializer {
     }
 
     public synchronized void ensureDefaultPublicTables() {
-        // Clear ghost seats on WAITING tables where no game is in progress
+        // Clean up empty WAITING tables that have no seated players
         for (Table table : tableRepository.findAll()) {
-            if (table.getStatus() == TableStatus.WAITING && table.getSeatedPlayerIds() != null && !table.getSeatedPlayerIds().isEmpty()) {
-                table.getSeatedPlayerIds().clear();
+            if (table.getStatus() == TableStatus.WAITING && (table.getSeatedPlayerIds() == null || table.getSeatedPlayerIds().isEmpty())) {
+                table.setStatus(TableStatus.CLOSED);
                 tableRepository.save(table);
-                log.info("Cleared stale ghost seats for WAITING table [{}]", table.getId());
-            }
-        }
-
-        for (StakeTier tier : StakeTier.values()) {
-            List<Table> available = tableRepository.findAll().stream()
-                    .filter(t -> t.getTableType() == TableType.PUBLIC)
-                    .filter(t -> t.getStakeTier() == tier)
-                    .filter(t -> t.getStatus() != TableStatus.CLOSED)
-                    .filter(t -> t.getSeatedPlayerIds() == null || t.getSeatedPlayerIds().size() < t.getMaxPlayers())
-                    .toList();
-
-            if (available.isEmpty()) {
-                log.info("Creating default public Teen Patti table for tier [{}]", tier);
-                Table table = Table.builder()
-                        .tableType(TableType.PUBLIC)
-                        .stakeTier(tier)
-                        .maxPlayers(6)
-                        .seatedPlayerIds(new ArrayList<>())
-                        .status(TableStatus.WAITING)
-                        .createdAt(Instant.now())
-                        .build();
-                tableRepository.save(table);
+                log.info("Cleaned up empty unseated table [{}]", table.getId());
             }
         }
     }

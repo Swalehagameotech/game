@@ -77,9 +77,7 @@ export default function AuthModal({ isOpen, onClose }) {
           },
           authData.accessToken
         );
-        if (authData.refreshToken) {
-          localStorage.setItem('refreshToken', authData.refreshToken);
-        }
+        localStorage.setItem('refreshToken', authData.refreshToken || authData.accessToken);
         onClose();
       }
     } catch (err) {
@@ -136,9 +134,7 @@ export default function AuthModal({ isOpen, onClose }) {
         },
         authData.accessToken
       );
-      if (authData.refreshToken) {
-        localStorage.setItem('refreshToken', authData.refreshToken);
-      }
+      localStorage.setItem('refreshToken', authData.refreshToken || authData.accessToken);
       onClose();
     } catch (err) {
       const resp = err.response?.data;

@@ -48,14 +48,29 @@ public class LobbyService {
         int boundedPage = Math.max(page, 0);
         Pageable pageable = PageRequest.of(boundedPage, boundedSize);
 
-        Page<Table> tablePage;
-        if (stakeTier != null) {
-            tablePage = tableRepository.findAvailablePublicTablesByStakeTier(stakeTier, pageable);
-        } else {
-            tablePage = tableRepository.findAvailablePublicTables(pageable);
-        }
+        List<Table> allPublic = tableRepository.findAll().stream()
+                .filter(t -> t.getTableType() == TableType.PUBLIC)
+                .filter(t -> t.getStatus() != TableStatus.CLOSED)
+                .filter(t -> stakeTier == null || t.getStakeTier() == stakeTier)
+                .sorted((a, b) -> {
+                    int countA = a.getSeatedPlayerIds() != null ? a.getSeatedPlayerIds().size() : 0;
+                    int countB = b.getSeatedPlayerIds() != null ? b.getSeatedPlayerIds().size() : 0;
+                    return Integer.compare(countB, countA);
+                })
+                .toList();
 
-        return PageResponse.from(tablePage, this::toTableSummaryResponse);
+        List<TableSummaryResponse> summaries = allPublic.stream()
+                .map(this::toTableSummaryResponse)
+                .toList();
+
+        return PageResponse.<TableSummaryResponse>builder()
+                .content(summaries)
+                .pageNumber(boundedPage)
+                .pageSize(boundedSize)
+                .totalElements(summaries.size())
+                .totalPages(1)
+                .last(true)
+                .build();
     }
 
     public PrivateTableCreatedResponse createPrivateTable(String userId, CreatePrivateTableRequest request) {

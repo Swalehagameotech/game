@@ -40,7 +40,9 @@ export default function HeaderNav({
               <div className="flex items-center gap-2 bg-slate-950 p-1.5 pl-3 rounded-2xl border border-slate-800">
                 <div className="flex flex-col">
                   <span className="text-[9px] uppercase font-bold text-slate-500 leading-none">Wallet</span>
-                  <span className="text-xs font-mono font-extrabold text-amber-400">₹0.00</span>
+                  <span className="text-xs font-mono font-extrabold text-amber-400">
+                    ₹{((user?.walletBalance ?? user?.balancePaise ?? 10000) / 100).toFixed(2)}
+                  </span>
                 </div>
                 <button
                   onClick={onOpenWallet}

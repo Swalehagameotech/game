@@ -79,6 +79,11 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
       updateTableState(joinData);
       onJoinTable(tableId);
     } catch (err) {
+      if (err.response?.status === 401) {
+        if (onOpenAuth) onOpenAuth();
+        setError('Your login session has expired. Please log in again as Demo Player to take a seat.');
+        return;
+      }
       const errMsg = err.response?.data?.message || err.response?.data?.error || err.response?.data || 'Failed to join table.';
       setError(typeof errMsg === 'string' ? errMsg : 'Failed to join table.');
     }
@@ -114,6 +119,12 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
       }
       fetchTables();
     } catch (err) {
+      if (err.response?.status === 401) {
+        setShowCreateModal(false);
+        if (onOpenAuth) onOpenAuth();
+        setError('Your login session has expired. Please log in again as Demo Player to create a table.');
+        return;
+      }
       const errMsg = err.response?.data?.message || err.response?.data?.error || err.response?.data || 'Failed to create table.';
       setError(typeof errMsg === 'string' ? errMsg : 'Failed to create table.');
     }
@@ -168,15 +179,33 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
               onClick={() => {
                 if (!isAuthenticated) {
                   if (onOpenAuth) onOpenAuth();
+                  else setError('Please log in to create a table.');
+                  return;
+                }
+                setCreateTableType('PUBLIC');
+                setCreatedPrivateCode(null);
+                setShowCreateModal(true);
+              }}
+              className="px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-500 flex items-center gap-2 transition-all cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4 text-slate-950" />
+              <span>Create Public Table</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (!isAuthenticated) {
+                  if (onOpenAuth) onOpenAuth();
                   else setError('Please log in to create a private table.');
                   return;
                 }
-                setShowCreateModal(true);
+                setCreateTableType('PRIVATE');
                 setCreatedPrivateCode(null);
+                setShowCreateModal(true);
               }}
               className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 flex items-center gap-2 transition-all cursor-pointer"
             >
-              <PlusCircle className="w-4 h-4" />
+              <Lock className="w-4 h-4 text-slate-950" />
               <span>Create Private Table</span>
             </button>
 
@@ -198,95 +227,7 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
         </div>
       </div>
 
-      {/* 3 Stake Tier Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Low Stake Box */}
-        <div
-          onClick={() => setSelectedStake('LOW')}
-          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
-            selectedStake === 'LOW'
-              ? 'bg-emerald-950/40 border-emerald-500 ring-2 ring-emerald-500/30'
-              : 'bg-slate-900/80 border-slate-800 hover:border-emerald-500/40'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              CASUAL PLAY
-            </span>
-            <Coins className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
-          </div>
-          <h3 className="text-xl font-black text-slate-100 mb-1">Low Stakes</h3>
-          <p className="text-xs text-slate-400 mb-4">Ideal for quick casual matches and practice hands.</p>
-          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
-              <span className="font-extrabold text-emerald-400 text-sm">₹10</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
-              <span className="font-extrabold text-slate-200 text-sm">₹1</span>
-            </div>
-          </div>
-        </div>
 
-        {/* Medium Stake Box */}
-        <div
-          onClick={() => setSelectedStake('MEDIUM')}
-          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
-            selectedStake === 'MEDIUM'
-              ? 'bg-amber-950/40 border-amber-500 ring-2 ring-amber-500/30'
-              : 'bg-slate-900/80 border-slate-800 hover:border-amber-500/40'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              POPULAR
-            </span>
-            <Flame className="w-5 h-5 text-amber-400 group-hover:scale-110 transition-transform" />
-          </div>
-          <h3 className="text-xl font-black text-slate-100 mb-1">Medium Stakes</h3>
-          <p className="text-xs text-slate-400 mb-4">Balanced stakes for competitive Teen Patti players.</p>
-          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
-              <span className="font-extrabold text-amber-400 text-sm">₹50</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
-              <span className="font-extrabold text-slate-200 text-sm">₹5</span>
-            </div>
-          </div>
-        </div>
-
-        {/* High Stake Box */}
-        <div
-          onClick={() => setSelectedStake('HIGH')}
-          className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
-            selectedStake === 'HIGH'
-              ? 'bg-rose-950/40 border-rose-500 ring-2 ring-rose-500/30'
-              : 'bg-slate-900/80 border-slate-800 hover:border-rose-500/40'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20">
-              HIGH ROLLER
-            </span>
-            <Crown className="w-5 h-5 text-rose-400 group-hover:scale-110 transition-transform" />
-          </div>
-          <h3 className="text-xl font-black text-slate-100 mb-1">High Stakes</h3>
-          <p className="text-xs text-slate-400 mb-4">Big pots & high risk for experienced players.</p>
-          <div className="flex items-center justify-between text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">MIN BUY-IN</span>
-              <span className="font-extrabold text-rose-400 text-sm">₹250</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">BOOT AMOUNT</span>
-              <span className="font-extrabold text-slate-200 text-sm">₹25</span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {error && (
         <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-400 text-sm flex items-center justify-between">
@@ -366,43 +307,57 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
                       {table.stakeTier || 'LOW'} STAKE
                     </span>
 
-                    <span className="text-xs font-mono text-slate-500 flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="font-bold text-slate-200">{currentPlayers}</span>/{maxPlayers}
+                    <span className={`text-xs font-mono flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
+                      currentPlayers > 0 
+                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 font-black animate-pulse' 
+                        : 'text-slate-500 border-transparent font-semibold'
+                    }`}>
+                      <Users className={`w-3.5 h-3.5 ${currentPlayers > 0 ? 'text-emerald-400' : 'text-slate-400'}`} />
+                      <span>{currentPlayers}/{maxPlayers} Players</span>
                     </span>
                   </div>
 
                   <h4 className="font-bold text-slate-100 text-lg flex items-center justify-between">
-                    <span>Table #{table.id ? table.id.slice(-6) : 'PUBLIC'}</span>
+                    <span>{table.tableName || `Table #${(table.tableId || table.id || 'PUBLIC').slice(-6).toUpperCase()}`}</span>
                     {table.privateTable && <Lock className="w-4 h-4 text-amber-400" />}
                   </h4>
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
                     <div>
-                      <span className="text-slate-500 block text-[10px]">MIN BUY-IN</span>
-                      <span className="font-bold text-emerald-400 text-sm">₹{minBuyInRupees}</span>
+                      <span className="text-slate-500 block text-[10px] font-bold uppercase">BOOT AMOUNT</span>
+                      <span className="font-bold text-amber-400 text-sm">
+                        ₹{((table.bootAmountPaise || table.bootAmount || 1000) / 100).toFixed(0)}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-slate-500 block text-[10px]">STATUS</span>
-                      <span className={`font-semibold text-xs ${table.status === 'IN_PROGRESS' ? 'text-cyan-400' : 'text-amber-400'}`}>
-                        {table.status === 'IN_PROGRESS' ? 'In Game' : 'Waiting'}
+                      <span className="text-slate-500 block text-[10px] font-bold uppercase">STATUS</span>
+                      <span className={`font-extrabold text-xs uppercase ${table.status === 'IN_PROGRESS' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                        {table.status === 'IN_PROGRESS' ? 'RUNNING' : 'WAITING'}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Join Table Button */}
+                {/* Join Table Action Button */}
                 <button
                   onClick={() => handleJoinTableClick(table.id || table.tableId)}
-                  disabled={isFull}
+                  disabled={isFull || table.status === 'IN_PROGRESS'}
                   className={`mt-5 w-full py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    isFull
+                    table.status === 'IN_PROGRESS'
+                      ? 'bg-cyan-950/40 text-cyan-400 border border-cyan-500/30 cursor-not-allowed'
+                      : isFull
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/20 hover:from-emerald-500 hover:to-teal-500'
                   }`}
                 >
                   <Play className="w-4 h-4 fill-current" />
-                  <span>{isFull ? 'Table Full' : 'Take Seat'}</span>
+                  <span>
+                    {table.status === 'IN_PROGRESS'
+                      ? 'Game Running (3+ Players)'
+                      : isFull
+                      ? 'Table Full (6/6)'
+                      : 'Join Table'}
+                  </span>
                 </button>
               </motion.div>
             );
@@ -420,8 +375,12 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
               exit={{ opacity: 0, scale: 0.95 }}
               className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative"
             >
-              <h3 className="text-xl font-bold text-slate-100 mb-1">Create Private Table</h3>
-              <p className="text-xs text-slate-400 mb-5">Generates a shareable 6-character code for private matches</p>
+              <h3 className="text-xl font-bold text-slate-100 mb-1">
+                {createTableType === 'PUBLIC' ? 'Create Public Table' : 'Create Private Table'}
+              </h3>
+              <p className="text-xs text-slate-400 mb-5">
+                {createTableType === 'PUBLIC' ? 'Create an open table for all players in the lobby to join' : 'Generates a shareable 6-character code for private matches'}
+              </p>
 
               {createdPrivateCode ? (
                 <div className="text-center py-6 bg-slate-950 border border-slate-800 rounded-xl p-4">
@@ -471,28 +430,29 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Stake Tier</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Boot Amount (₹)</label>
                     <select
                       value={createStakeTier}
                       onChange={(e) => setCreateStakeTier(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
-                      <option value="LOW">LOW (Min Buy-In ₹10)</option>
-                      <option value="MEDIUM">MEDIUM (Min Buy-In ₹50)</option>
-                      <option value="HIGH">HIGH (Min Buy-In ₹250)</option>
+                      <option value="LOW">Boot ₹10 (Min Buy-In ₹10)</option>
+                      <option value="MEDIUM">Boot ₹50 (Min Buy-In ₹50)</option>
+                      <option value="HIGH">Boot ₹100 / ₹250 (High Stakes)</option>
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Max Players</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Players (3 to 6)</label>
                     <select
                       value={createMaxPlayers}
                       onChange={(e) => setCreateMaxPlayers(Number(e.target.value))}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
-                      <option value={2}>2 Players (Heads Up)</option>
+                      <option value={3}>3 Players (Minimum)</option>
                       <option value={4}>4 Players</option>
-                      <option value={6}>6 Players (Full Ring)</option>
+                      <option value={5}>5 Players</option>
+                      <option value={6}>6 Players (Maximum)</option>
                     </select>
                   </div>
 

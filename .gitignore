@@ -9,8 +9,7 @@
 
 # Backend / Java / Maven
 backend/target/
-backend/.mvn/wrapper/maven-wrapper.jar
-backend/mvnw.cmd
+
 *.class
 *.jar
 *.war
