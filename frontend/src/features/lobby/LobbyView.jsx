@@ -195,6 +195,9 @@ export default function LobbyView({ onJoinTable, onOpenAuth }) {
               <span>Join with Code</span>
             </button>
           </div>
+        </div>
+      </div>
+
       {/* 3 Stake Tier Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Low Stake Box */}
