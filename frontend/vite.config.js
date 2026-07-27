@@ -11,8 +11,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  define: {
+    global: 'globalThis',
+  },
   server: {
     port: 3000,
     open: false,
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.js'],
   },
 });

@@ -8,8 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.Instant;
 
 /**
- * Reduced public profile DTO for /api/users/{userId}/public endpoint.
- * Contains only safe non-PII fields suitable for public leaderboards and friend lists.
+ * Public-safe profile for leaderboards and table host display.
  */
 @Data
 @Builder
@@ -19,5 +18,7 @@ public class PublicProfileResponse {
     private String id;
     private String displayName;
     private String avatarUrl;
+    private boolean isOnline;
+    private int matchesPlayedCount;
     private Instant createdAt;
 }

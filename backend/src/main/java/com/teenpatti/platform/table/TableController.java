@@ -1,5 +1,6 @@
 package com.teenpatti.platform.table;
 
+import com.teenpatti.platform.game.dto.GameSessionSummaryDto;
 import com.teenpatti.platform.common.response.ApiResponse;
 import com.teenpatti.platform.common.security.CurrentUser;
 import com.teenpatti.platform.table.dto.JoinTableResponse;
@@ -41,6 +42,14 @@ public class TableController {
             @PathVariable String tableId) {
         LeaveTableResponse response = tableService.leaveTable(userId, tableId);
         return ResponseEntity.ok(ApiResponse.success("Successfully processed leave table request", response));
+    }
+
+    @GetMapping("/{tableId}/session")
+    public ResponseEntity<ApiResponse<GameSessionSummaryDto>> getActiveGameSession(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        GameSessionSummaryDto session = tableService.getActiveGameSession(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Active game session retrieved", session));
     }
 
     @GetMapping("/{tableId}")

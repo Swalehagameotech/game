@@ -1,12 +1,15 @@
 package com.teenpatti.platform.websocket.dto;
 
 import com.teenpatti.platform.game.engine.HandOutcome;
+import com.teenpatti.platform.game.winner.WinnerSnapshot;
 import com.teenpatti.platform.table.TableStatus;
+import com.teenpatti.platform.table.TableType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.Instant;
 import java.util.List;
 
 @Data
@@ -15,11 +18,34 @@ import java.util.List;
 @AllArgsConstructor
 public class PlayerViewGameState {
     private String tableId;
+    private String hostId;
+    private int minPlayers;
+    private int maxPlayers;
     private TableStatus status;
     private String currentTurnPlayerId;
+    private int dealerSeatIndex;
+    private int currentTurnSeatIndex;
+    private int turnTimeoutSeconds;
+    private int turnSecondsRemaining;
+    private Instant turnDeadlineAt;
+    private List<String> activePlayerIds;
+    private List<String> blindPlayerIds;
+    private List<String> seenPlayerIds;
+    private List<String> packedPlayerIds;
     private long potPaise;
     private long currentBaseStakePaise;
     private long requiredBetPaise;
+    private long minRaiseBetPaise;
+    private long maxBetPaise;
+    private long playerContributedPaise;
+    private int blindSeenRatio;
+    private boolean myTurn;
+    private List<String> allowedActions;
     private List<PlayerSummaryView> players;
     private HandOutcome handOutcome;
+    private WinnerSnapshot winnerSnapshot;
+    private String tableType;
+    private String inviteCode;
+    private int countdownSeconds;
+    private long bootAmountPaise;
 }

@@ -1,5 +1,6 @@
 package com.teenpatti.platform.home.dto;
 
+import com.teenpatti.platform.leaderboard.dto.LeaderboardItemResponse;
 import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
 import com.teenpatti.platform.notification.Notification;
 import lombok.AllArgsConstructor;
@@ -10,8 +11,7 @@ import lombok.NoArgsConstructor;
 import java.util.List;
 
 /**
- * Unified Home Page aggregate dashboard payload returned by GET /api/home/dashboard.
- * Driven 100% by backend MongoDB database & STOMP WebSockets.
+ * Unified session aggregate returned on login and {@code GET /api/home/dashboard}.
  */
 @Data
 @Builder
@@ -23,9 +23,13 @@ public class HomeDashboardResponse {
     private WalletSummaryDto wallet;
     private ActiveGameDto activeGame;
     private List<TableSummaryResponse> publicTables;
+    private List<PrivateInvitationDto> privateInvitations;
+    private List<TableSummaryResponse> runningGames;
+    private List<TableSummaryResponse> waitingGames;
     private List<QuickPlayOptionDto> quickPlayOptions;
     private List<GameHistoryDto> recentHistory;
     private List<Notification> recentNotifications;
+    private List<LeaderboardItemResponse> leaderboardTop;
     private LiveStatsDto liveStats;
 
     @Data
@@ -64,6 +68,8 @@ public class HomeDashboardResponse {
         private int seatedCount;
         private int maxPlayers;
         private int userSeatIndex;
+        private String tableType;
+        private boolean isHost;
     }
 
     @Data
@@ -80,10 +86,20 @@ public class HomeDashboardResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class GameHistoryDto {
+        private String id;
         private String gameId;
+        private String handId;
+        private String tableId;
         private String tableName;
-        private String result; // WON, LOST, FOLDED
+        private String result;
         private long winningAmountPaise;
+        private long potAmountPaise;
+        private long winnerPayoutPaise;
+        private String variant;
+        private String winningCategory;
+        private String winningHandDescription;
+        private boolean foldWin;
+        private int playerCount;
         private String playedAt;
     }
 

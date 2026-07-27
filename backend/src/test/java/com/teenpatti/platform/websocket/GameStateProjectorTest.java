@@ -1,6 +1,12 @@
 package com.teenpatti.platform.websocket;
 
 import com.teenpatti.platform.game.engine.*;
+import com.teenpatti.platform.game.betting.BettingLogicService;
+import com.teenpatti.platform.game.betting.BettingState;
+import com.teenpatti.platform.game.winner.WinnerCalculationService;
+import com.teenpatti.platform.game.winner.WinnerSnapshot;
+import com.teenpatti.platform.game.turn.TurnManagementService;
+import com.teenpatti.platform.game.turn.TurnState;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableStatus;
 import com.teenpatti.platform.table.TableType;
@@ -17,25 +23,90 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 
 class GameStateProjectorTest {
 
     private UserRepository userRepository;
     private SessionRegistry sessionRegistry;
+    private TurnManagementService turnManagementService;
+    private BettingLogicService bettingLogicService;
+    private WinnerCalculationService winnerCalculationService;
     private GameStateProjector projector;
 
     @BeforeEach
     void setUp() {
         userRepository = Mockito.mock(UserRepository.class);
         sessionRegistry = Mockito.mock(SessionRegistry.class);
-        projector = new GameStateProjector(userRepository, sessionRegistry);
+        turnManagementService = Mockito.mock(TurnManagementService.class);
+        bettingLogicService = Mockito.mock(BettingLogicService.class);
+        winnerCalculationService = Mockito.mock(WinnerCalculationService.class);
+        projector = new GameStateProjector(
+                userRepository, sessionRegistry, turnManagementService, bettingLogicService, winnerCalculationService);
 
         Mockito.when(userRepository.findAllById(anyList())).thenReturn(List.of(
                 User.builder().id("p1").displayName("PlayerOne").build(),
                 User.builder().id("p2").displayName("PlayerTwo").build(),
                 User.builder().id("p3").displayName("PlayerThree").build()
         ));
+
+        Mockito.when(turnManagementService.buildTurnState(any(Table.class), any()))
+                .thenAnswer(invocation -> {
+                    Table table = invocation.getArgument(0);
+                    BettingRoundEngine engine = invocation.getArgument(1);
+                    List<String> seated = table.getSeatedPlayerIds();
+                    String turnUser = engine != null ? engine.getCurrentTurnPlayerId() : table.getCurrentTurnUserId();
+                    return TurnState.builder()
+                            .tableId(table.getId())
+                            .currentTurnUserId(turnUser)
+                            .currentTurnSeatIndex(turnUser != null ? seated.indexOf(turnUser) : -1)
+                            .dealerSeatIndex(table.getDealerSeatIndex())
+                            .potPaise(engine != null ? engine.getPotPaise() : table.getPotPaise())
+                            .currentBaseStakePaise(engine != null ? engine.getCurrentBaseStakePaise() : 0L)
+                            .turnTimeoutSeconds(20)
+                            .turnSecondsRemaining(0)
+                            .activePlayerIds(seated)
+                            .blindPlayerIds(seated)
+                            .seenPlayerIds(List.of())
+                            .packedPlayerIds(List.of())
+                            .build();
+                });
+
+        Mockito.when(bettingLogicService.buildBettingState(any(Table.class), any(), any(String.class)))
+                .thenAnswer(invocation -> {
+                    BettingRoundEngine engine = invocation.getArgument(1);
+                    String userId = invocation.getArgument(2);
+                    long required = engine != null ? engine.getRequiredBetPaise(userId) : 0L;
+                    return BettingState.builder()
+                            .tableId(invocation.<Table>getArgument(0).getId())
+                            .userId(userId)
+                            .potPaise(engine != null ? engine.getPotPaise() : 0L)
+                            .currentBaseStakePaise(engine != null ? engine.getCurrentBaseStakePaise() : 1000L)
+                            .requiredBetPaise(required)
+                            .minRaiseBetPaise(required * 2)
+                            .maxBetPaise(50_000L)
+                            .playerContributedPaise(1000L)
+                            .blindSeenRatio(2)
+                            .myTurn(engine != null && userId.equals(engine.getCurrentTurnPlayerId()))
+                            .allowedActions(List.of("CHAAL", "PACK"))
+                            .build();
+                });
+
+        Mockito.when(winnerCalculationService.buildWinnerSnapshot(any(), any(), any(), any(), any()))
+                .thenReturn(WinnerSnapshot.builder()
+                        .tableId("t1")
+                        .winnerUserId("p1")
+                        .winnerDisplayName("PlayerOne")
+                        .winningCategory("FOLD_WIN")
+                        .winningHandDescription("Last player standing")
+                        .foldWin(true)
+                        .potPaise(3000L)
+                        .rakePaise(150L)
+                        .payoutPaise(2850L)
+                        .participants(List.of())
+                        .build());
     }
 
     @Test

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 
 const GameContext = createContext(null);
 
@@ -9,40 +9,57 @@ export const GameProvider = ({ children }) => {
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
 
-  const updateTableState = (tableData) => {
+  const updateTableState = useCallback((tableData) => {
     setActiveTable(tableData);
-  };
+  }, []);
 
-  const updateGameState = (stateData) => {
-    setGameState(stateData);
-  };
+  const updateGameState = useCallback((stateData) => {
+    if (typeof stateData === 'function') {
+      setGameState((prev) => stateData(prev));
+    } else {
+      setGameState(stateData);
+    }
+  }, []);
 
-  const addNotification = (notification) => {
+  const addNotification = useCallback((notification) => {
     setNotifications((prev) => [notification, ...prev]);
     setUnreadNotificationsCount((prev) => prev + 1);
-  };
+  }, []);
 
-  const clearNotifications = () => {
+  const clearNotifications = useCallback(() => {
     setNotifications([]);
     setUnreadNotificationsCount(0);
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      activeTable,
+      gameState,
+      isWsConnected,
+      setIsWsConnected,
+      notifications,
+      unreadNotificationsCount,
+      updateTableState,
+      updateGameState,
+      addNotification,
+      clearNotifications,
+      setUnreadNotificationsCount,
+    }),
+    [
+      activeTable,
+      gameState,
+      isWsConnected,
+      notifications,
+      unreadNotificationsCount,
+      updateTableState,
+      updateGameState,
+      addNotification,
+      clearNotifications,
+    ]
+  );
 
   return (
-    <GameContext.Provider
-      value={{
-        activeTable,
-        gameState,
-        isWsConnected,
-        setIsWsConnected,
-        notifications,
-        unreadNotificationsCount,
-        updateTableState,
-        updateGameState,
-        addNotification,
-        clearNotifications,
-        setUnreadNotificationsCount,
-      }}
-    >
+    <GameContext.Provider value={value}>
       {children}
     </GameContext.Provider>
   );

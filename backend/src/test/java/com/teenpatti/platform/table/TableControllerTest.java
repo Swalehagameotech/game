@@ -164,9 +164,9 @@ class TableControllerTest {
                 .andExpect(jsonPath("$.data.heldBuyInPaise").value(1000))
                 .andExpect(jsonPath("$.data.tableDetail.seatedPlayers[0].displayName").value("PlayerOne"));
 
-        // Check wallet debited: 100,000 - 1,000 = 99,000
+        // Join no longer debits wallet; boot is collected when the host starts the game.
         Wallet wallet = walletRepository.findByUserId(player1.getId()).orElseThrow();
-        assertEquals(99_000L, wallet.getBalancePaise());
+        assertEquals(100_000L, wallet.getBalancePaise());
 
         Table table = tableRepository.findById(waitingTable.getId()).orElseThrow();
         assertTrue(table.getSeatedPlayerIds().contains(player1.getId()));
@@ -205,28 +205,27 @@ class TableControllerTest {
     }
 
     @Test
-    @DisplayName("Simulated debit failure after seat claim triggers seat claim rollback")
-    void joinTable_DebitFailure_RollsBackSeatClaim() throws Exception {
-        Mockito.doThrow(new RuntimeException("Simulated wallet service error"))
-                .when(walletService).applyLedgerEntry(eq(player1.getId()), eq(LedgerEntryType.BET), anyLong(), anyString());
+    @DisplayName("Join claims seat without debiting wallet on join")
+    void joinTable_doesNotDebitWalletOnJoin() throws Exception {
+        tableService.joinTable(player1.getId(), waitingTable.getId());
 
-        assertThrows(RuntimeException.class, () -> tableService.joinTable(player1.getId(), waitingTable.getId()));
+        Wallet wallet = walletRepository.findByUserId(player1.getId()).orElseThrow();
+        assertEquals(100_000L, wallet.getBalancePaise());
 
-        // Assert player is NOT seated on the table
         Table table = tableRepository.findById(waitingTable.getId()).orElseThrow();
-        assertFalse(table.getSeatedPlayerIds().contains(player1.getId()), "Seat claim must be rolled back on debit failure");
+        assertTrue(table.getSeatedPlayerIds().contains(player1.getId()));
     }
 
     @Test
-    @DisplayName("Leave WAITING table refunds buy-in fully and removes player")
+    @DisplayName("Leave WAITING table removes player without wallet refund on leave")
     void leaveTable_WaitingStatus_RefundsFully() throws Exception {
         tableService.joinTable(player1.getId(), waitingTable.getId());
 
         mockMvc.perform(post("/api/tables/" + waitingTable.getId() + "/leave")
                         .header("Authorization", "Bearer " + token1))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.refunded").value(true))
-                .andExpect(jsonPath("$.data.refundAmountPaise").value(1000));
+                .andExpect(jsonPath("$.data.refunded").value(false))
+                .andExpect(jsonPath("$.data.refundAmountPaise").value(0));
 
         // Wallet restored to 100,000
         Wallet wallet = walletRepository.findByUserId(player1.getId()).orElseThrow();

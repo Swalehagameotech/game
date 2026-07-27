@@ -6,13 +6,30 @@ import {
   ArrowUpRight, ArrowDownRight, Radio, Sparkles
 } from 'lucide-react';
 import axiosClient from '@/shared/api/axiosClient';
-import { wsGameService } from '@/shared/api/websocketService';
+import { LOBBY_REFRESH_EVENTS } from '@/shared/api/realtimeEvents';
+import stompService from '@/shared/api/stompService';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
+import { getNotificationDisplayLabel } from '@/features/notifications/notificationUtils';
+import { isActiveHandStatus, getTableStatusLabel, normalizeGameState, isCountdownStatus, isJoinableStatus } from '@/features/table/tableUtils';
+
+function formatHistoryDate(isoString) {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return isoString;
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatWinningCategory(category, description, foldWin) {
+  if (description) return description;
+  if (foldWin || category === 'FOLD_WIN') return 'Fold Win';
+  if (!category) return 'Completed';
+  return category.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   const { user, isAuthenticated, refreshWalletBalance } = useAuth();
-  const { updateTableState } = useGame();
+  const { updateTableState, notifications: liveNotifications } = useGame();
 
   // Aggregate Home Dashboard State (100% Backend-Driven)
   const [dashboardData, setDashboardData] = useState(null);
@@ -26,7 +43,8 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createTableType, setCreateTableType] = useState('PUBLIC');
   const [createStakeTier, setCreateStakeTier] = useState('LOW');
-  const [createMaxPlayers, setCreateMaxPlayers] = useState(6);
+  const [createMaxPlayers, setCreateMaxPlayers] = useState(3);
+  const [createMinPlayers, setCreateMinPlayers] = useState(3);
   const [createTableName, setCreateTableName] = useState('');
   const [createdPrivateCode, setCreatedPrivateCode] = useState(null);
   const [pendingCreatedTableId, setPendingCreatedTableId] = useState(null);
@@ -59,27 +77,34 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   };
 
   useEffect(() => {
-    fetchHomeDashboard();
-    const interval = setInterval(fetchHomeDashboard, 3000);
+    if (!isAuthenticated) {
+      setDashboardData(null);
+      return undefined;
+    }
 
-    const token = localStorage.getItem('accessToken') || 'guest';
-    wsGameService.connect(token, (message) => {
-      if (
-        message.type === 'TABLE_CREATED' ||
-        message.type === 'TABLE_UPDATED' ||
-        message.type === 'PLAYER_JOINED' ||
-        message.type === 'PLAYER_LEFT' ||
-        message.type === 'PLAYER_COUNT_CHANGED' ||
-        message.type === 'TABLE_STATUS_CHANGED' ||
-        message.type === 'LIVE_STATS_UPDATED' ||
-        message.type === 'WALLET_UPDATED'
-      ) {
+    fetchHomeDashboard();
+
+    const onRealtime = (e) => {
+      const event = e.detail;
+      if (event?.eventType && LOBBY_REFRESH_EVENTS.has(event.eventType)) {
         fetchHomeDashboard();
         if (refreshWalletBalance) refreshWalletBalance();
       }
-    });
+    };
 
-    return () => clearInterval(interval);
+    window.addEventListener('realtime', onRealtime);
+
+    // Fallback poll when STOMP is disconnected (30s)
+    const interval = setInterval(() => {
+      if (!stompService.isConnected()) {
+        fetchHomeDashboard();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('realtime', onRealtime);
+      clearInterval(interval);
+    };
   }, [selectedStake, isAuthenticated]);
 
   // 2. Quick Play Single-Click Matchmaking Handler
@@ -132,7 +157,8 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
       const joinRes = await axiosClient.post(`/tables/${tableId}/join`);
       const joinData = joinRes.data?.data || joinRes.data;
       if (refreshWalletBalance) refreshWalletBalance();
-      updateTableState(joinData);
+      const tablePayload = joinData.tableDetail || joinData;
+      updateTableState(normalizeGameState(tablePayload, user) || joinData);
       onJoinTable(tableId);
     } catch (err) {
       if (err.response?.status === 401) {
@@ -160,18 +186,29 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
         tableName: createTableName || undefined,
         stakeTier: createStakeTier,
         maxPlayers: createMaxPlayers,
+        minPlayers: createMinPlayers,
       });
 
       const data = res?.data || res;
       const targetTableId = data.tableId || data.id;
       setPendingCreatedTableId(targetTableId);
 
+      const tableMeta = {
+        tableId: targetTableId,
+        hostId: user?.id,
+        minPlayers: createMinPlayers,
+        maxPlayers: createMaxPlayers,
+        status: 'WAITING',
+        currentPlayerCount: 1,
+      };
+
       if (isPrivate) {
         setCreatedPrivateCode(data.inviteCode);
       } else {
         setShowCreateModal(false);
         if (targetTableId) {
-          handleJoinTableClick(targetTableId);
+          updateTableState(tableMeta);
+          onJoinTable(targetTableId);
         }
       }
       fetchHomeDashboard();
@@ -194,32 +231,75 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
       setError('Please enter a valid 6-character private invite code.');
       return;
     }
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
     setError('');
     try {
-      const { data: res } = await axiosClient.post(`/lobby/tables/private/join?inviteCode=${inviteCodeInput.trim().toUpperCase()}`);
-      const data = res?.data || res;
+      const code = inviteCodeInput.trim().toUpperCase();
+      const { data: res } = await axiosClient.post(`/lobby/tables/private/join?inviteCode=${encodeURIComponent(code)}`);
+      const joinData = res?.data || res;
       setShowJoinPrivateModal(false);
       setInviteCodeInput('');
-      const targetId = data.tableId || data.id;
+      if (refreshWalletBalance) refreshWalletBalance();
+      const tablePayload = joinData.tableDetail || joinData;
+      updateTableState(normalizeGameState(tablePayload, user) || joinData);
+      const targetId = joinData.tableId || tablePayload?.tableId;
       if (targetId) {
-        handleJoinTableClick(targetId);
+        onJoinTable(targetId);
       }
+      fetchHomeDashboard();
     } catch (err) {
+      if (err.response?.status === 401) {
+        if (onOpenAuth) onOpenAuth();
+        setError('Session expired. Please log in again.');
+        return;
+      }
       const errMsg = err.response?.data?.message || err.response?.data?.error || 'Invalid or expired private table code.';
+      setError(errMsg);
+    }
+  };
+
+  const handleAcceptPrivateInvite = async (invite) => {
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
+    setError('');
+    try {
+      const code = invite.inviteCode;
+      const { data: res } = await axiosClient.post(`/lobby/tables/private/join?inviteCode=${encodeURIComponent(code)}`);
+      const joinData = res?.data || res;
+      if (refreshWalletBalance) refreshWalletBalance();
+      const tablePayload = joinData.tableDetail || joinData;
+      updateTableState(normalizeGameState(tablePayload, user) || joinData);
+      const targetId = joinData.tableId || invite.tableId;
+      if (targetId) {
+        onJoinTable(targetId);
+      }
+      fetchHomeDashboard();
+    } catch (err) {
+      const errMsg = err.response?.data?.message || err.response?.data?.error || 'Could not join private table.';
       setError(errMsg);
     }
   };
 
   const liveStats = dashboardData?.liveStats || {
     onlinePlayers: 1,
-    runningTablesCount: tables.filter(t => t.status === 'IN_PROGRESS').length,
-    waitingTablesCount: tables.filter(t => t.status === 'WAITING').length,
+    runningTablesCount: tables.filter((t) => isActiveHandStatus(t.status)).length,
+    waitingTablesCount: tables.filter((t) => t.status === 'WAITING' || t.status === 'ROUND_END').length,
     totalActiveGames: tables.length,
   };
 
   const activeGame = dashboardData?.activeGame;
+  const privateInvitations = dashboardData?.privateInvitations || [];
   const recentHistory = dashboardData?.recentHistory || [];
-  const notifications = dashboardData?.recentNotifications || [];
+  const dashboardNotifications = dashboardData?.recentNotifications || [];
+  const notifications = [
+    ...liveNotifications,
+    ...dashboardNotifications.filter((d) => !liveNotifications.some((l) => l.id === d.id)),
+  ].slice(0, 5);
 
   return (
     <div className="space-y-6 pb-12">
@@ -295,6 +375,51 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
             <Play className="w-4 h-4 fill-current" />
             <span>Resume Game Now</span>
           </button>
+        </motion.div>
+      )}
+
+      {/* 2b. Private Table Invitations */}
+      {privateInvitations.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-5 shadow-xl"
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Lock className="w-5 h-5 text-amber-400" />
+            <h3 className="text-base font-black text-slate-100">Private Table Invitations</h3>
+            <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+              {privateInvitations.length} Pending
+            </span>
+          </div>
+          <div className="space-y-3">
+            {privateInvitations.map((invite) => (
+              <div
+                key={invite.notificationId || invite.tableId}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-950/60 border border-slate-800 rounded-2xl"
+              >
+                <div>
+                  <p className="text-sm font-bold text-slate-100">
+                    {invite.hostDisplayName || 'Host'} invited you to{' '}
+                    <span className="text-amber-400">{invite.tableName || 'Private Table'}</span>
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Code: <span className="font-mono text-amber-300">{invite.inviteCode}</span>
+                    {' · '}
+                    {invite.currentPlayerCount}/{invite.maxPlayers} players
+                    {' · '}
+                    Boot ₹{((invite.bootAmountPaise || 0) / 100).toFixed(0)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleAcceptPrivateInvite(invite)}
+                  className="px-4 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shrink-0"
+                >
+                  Accept & Join
+                </button>
+              </div>
+            ))}
+          </div>
         </motion.div>
       )}
 
@@ -436,6 +561,9 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
             const currentPlayers = table.seatedPlayerIds ? table.seatedPlayerIds.length : table.currentPlayerCount || 0;
             const maxPlayers = table.maxPlayers || 6;
             const isFull = currentPlayers >= maxPlayers;
+            const countdownSeconds = table.countdownSeconds ?? 0;
+            const isCountdown = isCountdownStatus(table.status, countdownSeconds);
+            const canJoin = !isFull && !isActiveHandStatus(table.status) && !isCountdown && isJoinableStatus(table.status);
 
             return (
               <motion.div
@@ -471,8 +599,11 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                     </div>
                     <div>
                       <span className="text-slate-500 block text-[10px] font-bold uppercase">STATUS</span>
-                      <span className={`font-extrabold text-xs uppercase ${table.status === 'IN_PROGRESS' ? 'text-cyan-400' : 'text-amber-400'}`}>
-                        {table.status === 'IN_PROGRESS' ? 'RUNNING' : 'WAITING'}
+                      <span className={`font-extrabold text-xs uppercase ${
+                        isCountdown ? 'text-rose-400 animate-pulse'
+                          : isActiveHandStatus(table.status) ? 'text-cyan-400' : 'text-amber-400'
+                      }`}>
+                        {isCountdown ? `STARTING ${countdownSeconds}s` : getTableStatusLabel(table.status)}
                       </span>
                     </div>
                   </div>
@@ -480,10 +611,12 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
 
                 <button
                   onClick={() => handleJoinTableClick(table.id || table.tableId)}
-                  disabled={isFull || table.status === 'IN_PROGRESS'}
+                  disabled={!canJoin}
                   className={`mt-5 w-full py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    table.status === 'IN_PROGRESS'
+                    isActiveHandStatus(table.status)
                       ? 'bg-cyan-950/40 text-cyan-400 border border-cyan-500/30 cursor-not-allowed'
+                      : isCountdown
+                      ? 'bg-rose-950/40 text-rose-300 border border-rose-500/30 cursor-not-allowed'
                       : isFull
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/20 hover:from-emerald-500 hover:to-teal-500'
@@ -491,10 +624,12 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                 >
                   <Play className="w-4 h-4 fill-current" />
                   <span>
-                    {table.status === 'IN_PROGRESS'
-                      ? 'Game Running (3+ Players)'
+                    {isActiveHandStatus(table.status)
+                      ? 'Game Running'
+                      : isCountdown
+                      ? `Starting in ${countdownSeconds}s`
                       : isFull
-                      ? 'Table Full (6/6)'
+                      ? `Table Full (${maxPlayers}/${maxPlayers})`
                       : 'Join Table'}
                   </span>
                 </button>
@@ -517,17 +652,32 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
             <div className="text-center py-8 text-xs text-slate-500">No game history items recorded yet. Join a match to record games!</div>
           ) : (
             <div className="space-y-2.5">
-              {recentHistory.map((item, idx) => (
-                <div key={idx} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-slate-200 block">{item.tableName}</span>
-                    <span className="text-[10px] text-slate-500 font-mono">ID: {item.gameId}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className={`font-extrabold block ${item.result === 'WON' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {item.result === 'WON' ? `+₹${(item.winningAmountPaise / 100).toFixed(2)}` : `-₹${(item.winningAmountPaise / 100).toFixed(2)}`}
+              {recentHistory.map((item) => (
+                <div key={item.id || item.gameId} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex items-center justify-between gap-3 text-xs">
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-200 block truncate">{item.tableName}</span>
+                    <span className="text-[10px] text-slate-500 font-mono block truncate">
+                      {item.gameId}{item.variant ? ` · ${item.variant}` : ''}{item.playerCount ? ` · ${item.playerCount} players` : ''}
                     </span>
-                    <span className="text-[9px] text-slate-500">{item.result}</span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      {formatWinningCategory(item.winningCategory, item.winningHandDescription, item.foldWin)}
+                    </span>
+                    <span className="text-[9px] text-slate-600 block">{formatHistoryDate(item.playedAt)}</span>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {item.result === 'WON' ? (
+                      <>
+                        <span className="font-extrabold block text-emerald-400">
+                          +₹{((item.winningAmountPaise ?? item.winnerPayoutPaise ?? 0) / 100).toFixed(2)}
+                        </span>
+                        <span className="text-[9px] text-slate-500">Pot ₹{((item.potAmountPaise ?? 0) / 100).toFixed(2)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-extrabold block text-rose-400">LOST</span>
+                        <span className="text-[9px] text-slate-500">Pot ₹{((item.potAmountPaise ?? 0) / 100).toFixed(2)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -546,11 +696,11 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
             <div className="text-center py-8 text-xs text-slate-500">No recent notifications. Live events will display here automatically!</div>
           ) : (
             <div className="space-y-2.5">
-              {notifications.slice(0, 5).map((n, idx) => (
-                <div key={idx} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 text-xs flex items-start gap-2.5">
+              {notifications.slice(0, 5).map((n) => (
+                <div key={n.id || n.message} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 text-xs flex items-start gap-2.5">
                   <div className="w-2 h-2 rounded-full bg-amber-400 mt-1 shrink-0" />
                   <div>
-                    <span className="font-bold text-slate-200 block">{n.title || n.type}</span>
+                    <span className="font-bold text-slate-200 block">{getNotificationDisplayLabel(n)}</span>
                     <p className="text-slate-400 text-[11px] mt-0.5">{n.message}</p>
                   </div>
                 </div>
@@ -590,7 +740,15 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                       setShowCreateModal(false);
                       setCreatedPrivateCode(null);
                       if (pendingCreatedTableId) {
-                        handleJoinTableClick(pendingCreatedTableId);
+                        updateTableState({
+                          tableId: pendingCreatedTableId,
+                          hostId: user?.id,
+                          minPlayers: createMinPlayers,
+                          maxPlayers: createMaxPlayers,
+                          status: 'WAITING',
+                          currentPlayerCount: 1,
+                        });
+                        onJoinTable(pendingCreatedTableId);
                       }
                     }}
                     className="mt-5 px-6 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shadow-lg shadow-amber-500/20"
@@ -638,10 +796,27 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                   </div>
 
                   <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Minimum Players</label>
+                    <select
+                      value={createMinPlayers}
+                      onChange={(e) => setCreateMinPlayers(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                    >
+                      {[2, 3, 4, 5, 6].filter((n) => n <= createMaxPlayers).map((n) => (
+                        <option key={n} value={n}>{n} Players (min to start)</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Players (3 to 6)</label>
                     <select
                       value={createMaxPlayers}
-                      onChange={(e) => setCreateMaxPlayers(Number(e.target.value))}
+                      onChange={(e) => {
+                        const max = Number(e.target.value);
+                        setCreateMaxPlayers(max);
+                        if (createMinPlayers > max) setCreateMinPlayers(max);
+                      }}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
                       <option value={3}>3 Players (Minimum)</option>

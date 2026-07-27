@@ -12,6 +12,9 @@ import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
 import com.teenpatti.platform.table.TableStatus;
 import com.teenpatti.platform.table.TableType;
+import com.teenpatti.platform.table.PublicTableService;
+import com.teenpatti.platform.table.PrivateTableService;
+import com.teenpatti.platform.table.dto.JoinTableResponse;
 import com.teenpatti.platform.wallet.WalletService;
 import com.teenpatti.platform.wallet.dto.WalletBalanceResponse;
 import lombok.RequiredArgsConstructor;
@@ -38,16 +41,15 @@ public class LobbyService {
     private final InviteCodeGenerator inviteCodeGenerator;
     private final com.teenpatti.platform.table.DefaultTableInitializer defaultTableInitializer;
     private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
+    private final PublicTableService publicTableService;
+    private final PrivateTableService privateTableService;
+    private final com.teenpatti.platform.table.TableService tableService;
 
     public List<TableSummaryResponse> getPublicTables() {
         return getPublicTables(null, 0, 50).getContent();
     }
 
     public PageResponse<TableSummaryResponse> getPublicTables(StakeTier stakeTier, int page, int size) {
-        if (defaultTableInitializer != null) {
-            defaultTableInitializer.ensureDefaultPublicTables();
-        }
-
         int boundedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         int boundedPage = Math.max(page, 0);
         Pageable pageable = PageRequest.of(boundedPage, boundedSize);
@@ -80,20 +82,31 @@ public class LobbyService {
     public PrivateTableCreatedResponse createPrivateTable(String userId, CreatePrivateTableRequest request) {
         String inviteCode = inviteCodeGenerator.generateUniqueInviteCode();
 
+        int maxPlayers = request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6;
+        int minPlayers = request.getMinPlayers() > 0 ? request.getMinPlayers() : 3;
+        if (minPlayers > maxPlayers) {
+            minPlayers = maxPlayers;
+        }
+
         List<String> initialSeated = new ArrayList<>();
+        initialSeated.add(userId);
 
         long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
                 ? request.getBootAmount() 
                 : stakeTierConfig.getMinBuyInPaise(request.getStakeTier());
 
+        WalletBalanceResponse hostBalance = walletService.getBalance(userId);
+        if (hostBalance.getBalancePaise() < bootPaise) {
+            throw new com.teenpatti.platform.common.exception.InsufficientBalanceException(
+                    "Insufficient wallet balance for boot amount. Required: " + bootPaise + " paise.");
+        }
+
         String name = request.getTableName() != null && !request.getTableName().isBlank() 
                 ? request.getTableName() 
                 : "Teen Patti Private #" + inviteCode;
 
-        com.teenpatti.platform.table.GameVariant variant = com.teenpatti.platform.table.GameVariant.HIGHER;
-        if (request.getGameVariant() != null) {
-            try { variant = com.teenpatti.platform.table.GameVariant.valueOf(request.getGameVariant().toUpperCase()); } catch (Exception ignored) {}
-        }
+        com.teenpatti.platform.table.GameVariant variant =
+                com.teenpatti.platform.table.GameVariantResolver.resolve(request.getGameVariant());
 
         Table table = Table.builder()
                 .tableName(name)
@@ -103,19 +116,24 @@ public class LobbyService {
                 .stakeTier(request.getStakeTier())
                 .gameVariant(variant)
                 .bootAmountPaise(bootPaise)
-                .maxPlayers(request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6)
+                .minPlayers(minPlayers)
+                .maxPlayers(maxPlayers)
                 .inviteCode(inviteCode)
                 .seatedPlayerIds(initialSeated)
+                .seatMap(com.teenpatti.platform.table.TableSeatHelper.buildSeatMap(initialSeated))
                 .status(TableStatus.WAITING)
                 .createdAt(Instant.now())
                 .build();
 
         Table savedTable = tableRepository.save(table);
-        log.info("Created PRIVATE table [{}] with inviteCode [{}] by host [{}]",
+        log.info("Created PRIVATE table [{}] with inviteCode [{}] by host [{}] (host seated as player 1)",
                 savedTable.getId(), inviteCode, userId);
+
+        privateTableService.sendInviteNotifications(savedTable, userId, request.getInviteUserIds());
 
         TableSummaryResponse summary = toTableSummaryResponse(savedTable);
         webSocketEventPublisher.publishTableCreated(summary);
+        webSocketEventPublisher.publishPlayerJoined(savedTable.getId(), userId, 1);
 
         return PrivateTableCreatedResponse.builder()
                 .tableId(savedTable.getId())
@@ -124,20 +142,31 @@ public class LobbyService {
     }
 
     public TableSummaryResponse createPublicTable(String userId, CreatePrivateTableRequest request) {
+        int maxPlayers = request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6;
+        int minPlayers = request.getMinPlayers() > 0 ? request.getMinPlayers() : 3;
+        if (minPlayers > maxPlayers) {
+            minPlayers = maxPlayers;
+        }
+
         List<String> initialSeated = new ArrayList<>();
+        initialSeated.add(userId);
 
         long bootPaise = request.getBootAmount() != null && request.getBootAmount() > 0 
                 ? request.getBootAmount() 
                 : stakeTierConfig.getMinBuyInPaise(request.getStakeTier());
 
+        WalletBalanceResponse hostBalance = walletService.getBalance(userId);
+        if (hostBalance.getBalancePaise() < bootPaise) {
+            throw new com.teenpatti.platform.common.exception.InsufficientBalanceException(
+                    "Insufficient wallet balance for boot amount. Required: " + bootPaise + " paise.");
+        }
+
         String name = request.getTableName() != null && !request.getTableName().isBlank() 
                 ? request.getTableName() 
                 : "Teen Patti Public Table";
 
-        com.teenpatti.platform.table.GameVariant variant = com.teenpatti.platform.table.GameVariant.HIGHER;
-        if (request.getGameVariant() != null) {
-            try { variant = com.teenpatti.platform.table.GameVariant.valueOf(request.getGameVariant().toUpperCase()); } catch (Exception ignored) {}
-        }
+        com.teenpatti.platform.table.GameVariant variant =
+                com.teenpatti.platform.table.GameVariantResolver.resolve(request.getGameVariant());
 
         Table table = Table.builder()
                 .tableName(name)
@@ -147,34 +176,40 @@ public class LobbyService {
                 .stakeTier(request.getStakeTier())
                 .gameVariant(variant)
                 .bootAmountPaise(bootPaise)
-                .maxPlayers(request.getMaxPlayers() > 0 ? request.getMaxPlayers() : 6)
+                .minPlayers(minPlayers)
+                .maxPlayers(maxPlayers)
                 .seatedPlayerIds(initialSeated)
+                .seatMap(com.teenpatti.platform.table.TableSeatHelper.buildSeatMap(initialSeated))
                 .status(TableStatus.WAITING)
                 .createdAt(Instant.now())
                 .build();
 
         Table savedTable = tableRepository.save(table);
-        log.info("Created PUBLIC table [{}] by host [{}]", savedTable.getId(), userId);
+        log.info("Created PUBLIC table [{}] by host [{}] (host seated as player 1)", savedTable.getId(), userId);
 
         TableSummaryResponse summary = toTableSummaryResponse(savedTable);
         webSocketEventPublisher.publishTableCreated(summary);
+        webSocketEventPublisher.publishPlayerJoined(savedTable.getId(), userId, 1);
+        publicTableService.afterPublicTableMutation(savedTable.getId());
 
         return summary;
     }
 
     public TableSummaryResponse getPrivateTableByInviteCode(String inviteCode) {
-        if (inviteCode == null || inviteCode.isBlank()) {
-            throw new TableNotFoundException("Private table not found or invalid invite code.");
-        }
-
-        Table table = tableRepository.findByInviteCode(inviteCode.trim())
-                .orElseThrow(() -> new TableNotFoundException("Private table not found or invalid invite code."));
-
-        if (table.getTableType() != TableType.PRIVATE || table.getStatus() == TableStatus.CLOSED) {
-            throw new TableNotFoundException("Private table not found or invalid invite code.");
-        }
-
+        Table table = privateTableService.resolvePrivateTable(inviteCode);
         return toTableSummaryResponse(table);
+    }
+
+    /**
+     * Join a private table using its invite code — validates code, seats player, returns join payload.
+     */
+    public JoinTableResponse joinPrivateTableByInviteCode(String userId, String inviteCode) {
+        Table table = privateTableService.resolvePrivateTable(inviteCode);
+        privateTableService.assertJoinable(table);
+
+        JoinTableResponse response = tableService.joinTable(userId, table.getId());
+        privateTableService.markInviteNotificationsRead(userId, table.getId(), table.getInviteCode());
+        return response;
     }
 
     public EligibilityCheckResponse checkJoinEligibility(String userId, String tableId) {
@@ -183,6 +218,11 @@ public class LobbyService {
 
         if (table.getStatus() == TableStatus.CLOSED) {
             return EligibilityCheckResponse.ineligible("TABLE_CLOSED", null, null);
+        }
+
+        if (table.getTableType() == TableType.PRIVATE
+                && com.teenpatti.platform.table.TableStatusGroups.isRunning(table.getStatus())) {
+            return EligibilityCheckResponse.ineligible("GAME_IN_PROGRESS", null, null);
         }
 
         int currentPlayers = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
@@ -203,13 +243,19 @@ public class LobbyService {
         return EligibilityCheckResponse.eligible(minRequiredPaise, currentBalancePaise);
     }
 
+    public TableSummaryResponse toTableSummary(Table table, String hostDisplayName) {
+        TableSummaryResponse summary = toTableSummaryResponse(table);
+        summary.setHostDisplayName(hostDisplayName != null ? hostDisplayName : "Host");
+        return summary;
+    }
+
     private TableSummaryResponse toTableSummaryResponse(Table table) {
         int playerCount = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
         long bootAmount = table.getBootAmountPaise() > 0 ? table.getBootAmountPaise() : stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
         String name = table.getTableName() != null && !table.getTableName().isBlank() 
                 ? table.getTableName() 
                 : "Teen Patti " + (table.getTableType() != null ? table.getTableType().name() : "PUBLIC");
-        String variant = table.getGameVariant() != null ? table.getGameVariant().name() : "HIGHER";
+        String variant = table.getGameVariant() != null ? table.getGameVariant().name() : "CLASSIC";
 
         return TableSummaryResponse.builder()
                 .tableId(table.getId())
@@ -217,12 +263,14 @@ public class LobbyService {
                 .hostId(table.getHostId())
                 .stakeTier(table.getStakeTier())
                 .maxPlayers(table.getMaxPlayers())
+                .minPlayers(table.getMinPlayers() > 0 ? table.getMinPlayers() : 3)
                 .currentPlayerCount(playerCount)
                 .bootAmount(bootAmount)
                 .gameVariant(variant)
                 .visibility(table.getVisibility() != null ? table.getVisibility() : (table.getTableType() != null ? table.getTableType().name() : "PUBLIC"))
                 .status(table.getStatus())
                 .tableType(table.getTableType())
+                .countdownSeconds(table.getCountdownSeconds())
                 .build();
     }
 }

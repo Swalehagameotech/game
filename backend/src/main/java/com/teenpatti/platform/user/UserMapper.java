@@ -1,19 +1,21 @@
 package com.teenpatti.platform.user;
 
 import com.teenpatti.platform.user.dto.PublicProfileResponse;
+import com.teenpatti.platform.user.dto.UserActiveTableDto;
 import com.teenpatti.platform.user.dto.UserProfileResponse;
 
 /**
- * Mapper utility for transforming User entity documents into external DTO responses.
+ * Maps {@link User} entities to external profile DTOs.
  */
-public class UserMapper {
+public final class UserMapper {
 
-    /**
-     * Converts User document entity into UserProfileResponse DTO with phone masking.
-     * Masking Rule: Retains only the last 4 digits, replacing all preceding digits with 'X'.
-     * Example: "9876543210" -> "XXXXXX3210"
-     */
-    public static UserProfileResponse toUserProfileResponse(User user) {
+    private UserMapper() {
+    }
+
+    public static UserProfileResponse toUserProfileResponse(
+            User user,
+            long walletBalancePaise,
+            UserActiveTableDto activeTable) {
         if (user == null) {
             return null;
         }
@@ -22,17 +24,21 @@ public class UserMapper {
                 .email(user.getEmail())
                 .phoneNumber(maskPhoneNumber(user.getPhoneNumber()))
                 .displayName(user.getDisplayName())
-                .avatarUrl(user.getAvatarUrl())
-                .kycStatus(user.getKycStatus())
+                .avatarUrl(resolveAvatarUrl(user))
                 .accountStatus(user.getAccountStatus())
                 .role(user.getRole())
+                .walletBalancePaise(walletBalancePaise)
+                .formattedWalletBalance(String.format("₹%.2f", walletBalancePaise / 100.0))
+                .isOnline(user.isOnline())
+                .lastSeenAt(user.getLastSeenAt())
+                .matchesPlayedCount(user.getMatchesPlayedCount())
+                .firstLoginTutorialCompleted(user.isFirstLoginTutorialCompleted())
+                .activeTable(activeTable)
                 .createdAt(user.getCreatedAt())
+                .updatedAt(user.getUpdatedAt())
                 .build();
     }
 
-    /**
-     * Converts User document entity into reduced PublicProfileResponse DTO.
-     */
     public static PublicProfileResponse toPublicProfileResponse(User user) {
         if (user == null) {
             return null;
@@ -40,9 +46,18 @@ public class UserMapper {
         return PublicProfileResponse.builder()
                 .id(user.getId())
                 .displayName(user.getDisplayName())
-                .avatarUrl(user.getAvatarUrl())
+                .avatarUrl(resolveAvatarUrl(user))
+                .isOnline(user.isOnline())
+                .matchesPlayedCount(user.getMatchesPlayedCount())
                 .createdAt(user.getCreatedAt())
                 .build();
+    }
+
+    private static String resolveAvatarUrl(User user) {
+        if (user.getAvatarUrl() != null && !user.getAvatarUrl().isBlank()) {
+            return user.getAvatarUrl();
+        }
+        return "https://api.dicebear.com/7.x/avataaars/svg?seed=" + user.getId();
     }
 
     private static String maskPhoneNumber(String rawPhone) {

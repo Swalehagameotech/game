@@ -9,6 +9,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -28,7 +30,15 @@ public class CreatePrivateTableRequest {
     @Builder.Default
     private int maxPlayers = 6;
 
+    @Min(value = 2, message = "minPlayers must be at least 2")
+    @Max(value = 6, message = "minPlayers cannot exceed 6")
+    @Builder.Default
+    private int minPlayers = 3;
+
     private Long bootAmount;
 
     private String gameVariant; // HIGHER, MEDIUM, LOWER
+
+    /** Optional user IDs to receive in-app GAME_INVITE notifications. */
+    private List<String> inviteUserIds;
 }

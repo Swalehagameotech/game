@@ -8,6 +8,8 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.annotation.Version;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -22,6 +24,10 @@ import java.time.Instant;
 @NoArgsConstructor
 @AllArgsConstructor
 @Document(collection = "users")
+@CompoundIndexes({
+        @CompoundIndex(name = "role_status_idx", def = "{'role': 1, 'accountStatus': 1}"),
+        @CompoundIndex(name = "online_lastseen_idx", def = "{'isOnline': 1, 'lastSeenAt': -1}")
+})
 public class User {
 
     @Id
@@ -56,6 +62,8 @@ public class User {
 
     @Builder.Default
     private boolean isOnline = false;
+
+    private Instant lastSeenAt;
 
     @Builder.Default
     private boolean firstLoginTutorialCompleted = false;

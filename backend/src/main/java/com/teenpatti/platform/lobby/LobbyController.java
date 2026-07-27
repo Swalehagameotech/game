@@ -7,6 +7,7 @@ import com.teenpatti.platform.lobby.dto.CreatePrivateTableRequest;
 import com.teenpatti.platform.lobby.dto.EligibilityCheckResponse;
 import com.teenpatti.platform.lobby.dto.PrivateTableCreatedResponse;
 import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
+import com.teenpatti.platform.table.dto.JoinTableResponse;
 import com.teenpatti.platform.table.StakeTier;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +57,14 @@ public class LobbyController {
             @PathVariable String inviteCode) {
         TableSummaryResponse response = lobbyService.getPrivateTableByInviteCode(inviteCode);
         return ResponseEntity.ok(ApiResponse.success("Private table retrieved successfully", response));
+    }
+
+    @PostMapping("/tables/private/join")
+    public ResponseEntity<ApiResponse<JoinTableResponse>> joinPrivateTableByInviteCode(
+            @CurrentUser String userId,
+            @RequestParam String inviteCode) {
+        JoinTableResponse response = lobbyService.joinPrivateTableByInviteCode(userId, inviteCode);
+        return ResponseEntity.ok(ApiResponse.success("Joined private table successfully", response));
     }
 
     @PostMapping("/tables/{tableId}/check-eligibility")

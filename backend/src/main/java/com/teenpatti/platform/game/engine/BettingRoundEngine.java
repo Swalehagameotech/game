@@ -1,5 +1,9 @@
 package com.teenpatti.platform.game.engine;
 
+import com.teenpatti.platform.game.variant.ClassicVariantStrategy;
+import com.teenpatti.platform.game.winner.VariantWinnerResolver;
+import com.teenpatti.platform.game.winner.WinnerResolver;
+
 import java.util.*;
 
 /**
@@ -10,6 +14,7 @@ import java.util.*;
 public class BettingRoundEngine {
 
     private final GameEngineConfig config;
+    private final WinnerResolver winnerResolver;
     private final List<String> playerIds;
     private final Map<String, PlayerStatus> playerStatusMap;
     private final Map<String, List<Card>> playerHandMap;
@@ -22,10 +27,18 @@ public class BettingRoundEngine {
     private HandOutcome outcome;
 
     public BettingRoundEngine(GameEngineConfig config) {
+        this(config, new VariantWinnerResolver(new ClassicVariantStrategy()));
+    }
+
+    public BettingRoundEngine(GameEngineConfig config, WinnerResolver winnerResolver) {
         if (config == null) {
             throw new IllegalArgumentException("GameEngineConfig must not be null");
         }
+        if (winnerResolver == null) {
+            throw new IllegalArgumentException("WinnerResolver must not be null");
+        }
         this.config = config;
+        this.winnerResolver = winnerResolver;
         this.playerIds = new ArrayList<>();
         this.playerStatusMap = new HashMap<>();
         this.playerHandMap = new HashMap<>();
@@ -34,14 +47,14 @@ public class BettingRoundEngine {
     }
 
     /**
-     * Initializes and starts a new hand for the given players using the provided deck.
+     * Initializes a hand using a pre-dealt private hand map (from {@link com.teenpatti.platform.game.distribution.CardDistributionService}).
      */
-    public void startHand(List<String> players, Deck deck) {
+    public void startHand(List<String> players, Map<String, List<Card>> privateHands) {
         if (players == null || players.size() < 2) {
             throw new IllegalArgumentException("At least 2 players are required to start a Teen Patti hand");
         }
-        if (deck == null) {
-            throw new IllegalArgumentException("Deck must not be null");
+        if (privateHands == null || privateHands.isEmpty()) {
+            throw new IllegalArgumentException("Private hands must not be null or empty");
         }
 
         this.playerIds.clear();
@@ -54,8 +67,14 @@ public class BettingRoundEngine {
         this.potPaise = 0L;
 
         for (String playerId : playerIds) {
+            List<Card> hand = privateHands.get(playerId);
+            if (hand == null || hand.size() != com.teenpatti.platform.game.engine.DeckConstants.CARDS_PER_HAND) {
+                throw new IllegalArgumentException(
+                        "Player " + playerId + " must have exactly "
+                                + com.teenpatti.platform.game.engine.DeckConstants.CARDS_PER_HAND + " cards dealt");
+            }
             this.playerStatusMap.put(playerId, PlayerStatus.BLIND);
-            this.playerHandMap.put(playerId, deck.deal(3));
+            this.playerHandMap.put(playerId, new ArrayList<>(hand));
             this.playerContributedMap.put(playerId, bootPaise);
             this.potPaise += bootPaise;
         }
@@ -64,6 +83,15 @@ public class BettingRoundEngine {
         this.currentTurnIndex = 0;
         this.handFinished = false;
         this.outcome = null;
+    }
+
+    public void startHand(List<String> players, Deck deck) {
+        if (deck == null) {
+            throw new IllegalArgumentException("Deck must not be null");
+        }
+        com.teenpatti.platform.game.distribution.CardDistributionService distributionService =
+                new com.teenpatti.platform.game.distribution.CardDistributionService();
+        startHand(players, distributionService.dealPrivateHands(deck, players).getHandsByPlayerId());
     }
 
     /**
@@ -198,53 +226,21 @@ public class BettingRoundEngine {
     }
 
     private void finishHandByFold(String winnerId) {
-        long rake = calculateRake(potPaise);
-        long payout = potPaise - rake;
         handFinished = true;
-        outcome = new HandOutcome(
-                winnerId,
-                potPaise,
-                rake,
-                payout,
-                null, // No category reveal on fold
-                Map.of(),
-                "Winner by fold (all other players packed)"
-        );
+        outcome = winnerResolver.resolveFoldWin(winnerId, potPaise, config);
     }
 
     private void finishHandByShow(List<String> activePlayers) {
         String p1 = activePlayers.get(0);
         String p2 = activePlayers.get(1);
-
-        HandResult result1 = HandEvaluator.evaluateHand(playerHandMap.get(p1));
-        HandResult result2 = HandEvaluator.evaluateHand(playerHandMap.get(p2));
-
-        int cmp = HandEvaluator.compareHands(result1, result2);
-        String winnerId = (cmp >= 0) ? p1 : p2;
-        HandResult winningResult = (cmp >= 0) ? result1 : result2;
-
-        long rake = calculateRake(potPaise);
-        long payout = potPaise - rake;
         handFinished = true;
-
-        Map<String, List<Card>> revealedMap = new HashMap<>();
-        revealedMap.put(p1, playerHandMap.get(p1));
-        revealedMap.put(p2, playerHandMap.get(p2));
-
-        outcome = new HandOutcome(
-                winnerId,
+        outcome = winnerResolver.resolveShowdown(
+                p1,
+                playerHandMap.get(p1),
+                p2,
+                playerHandMap.get(p2),
                 potPaise,
-                rake,
-                payout,
-                winningResult.getCategory(),
-                revealedMap,
-                "Winner by showdown (" + winningResult.getCategory().getDescription() + ")"
-        );
-    }
-
-    private long calculateRake(long potAmount) {
-        double rakeDouble = potAmount * (config.getRakePercentage() / 100.0);
-        return Math.round(rakeDouble);
+                config);
     }
 
     private void advanceTurn() {
@@ -266,6 +262,29 @@ public class BettingRoundEngine {
                 .toList();
     }
 
+    public List<String> getPlayerIdsByStatus(PlayerStatus status) {
+        if (status == null) {
+            return List.of();
+        }
+        return playerIds.stream()
+                .filter(id -> playerStatusMap.get(id) == status)
+                .toList();
+    }
+
+    /**
+     * Sets the opening turn to the player left of the dealer.
+     */
+    public void setStartingTurnPlayer(String playerId) {
+        int idx = playerIds.indexOf(playerId);
+        if (idx < 0) {
+            throw new IllegalArgumentException("Player not in hand: " + playerId);
+        }
+        if (handFinished) {
+            throw new IllegalStateException("Cannot set turn on finished hand");
+        }
+        currentTurnIndex = idx;
+    }
+
     public String getCurrentTurnPlayerId() {
         if (handFinished || playerIds.isEmpty()) return null;
         return playerIds.get(currentTurnIndex);
@@ -285,6 +304,10 @@ public class BettingRoundEngine {
 
     public long getPotPaise() {
         return potPaise;
+    }
+
+    public long getPlayerContributedPaise(String playerId) {
+        return playerContributedMap.getOrDefault(playerId, 0L);
     }
 
     public boolean isHandFinished() {

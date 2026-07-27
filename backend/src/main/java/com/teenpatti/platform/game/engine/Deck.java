@@ -3,10 +3,13 @@ package com.teenpatti.platform.game.engine;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Standard 52-card Deck with Fisher-Yates shuffling using SecureRandom.
+ * Standard 52-card deck (4 suits × 13 ranks, no jokers) with Fisher-Yates shuffling via {@link SecureRandom}.
+ * Deck order is server-only and must never be broadcast to clients.
  */
 public class Deck {
 
@@ -19,12 +22,12 @@ public class Deck {
 
     public Deck(SecureRandom random) {
         this.random = random != null ? random : new SecureRandom();
-        this.cards = new ArrayList<>(52);
+        this.cards = new ArrayList<>(DeckConstants.STANDARD_DECK_SIZE);
         reset();
     }
 
     /**
-     * Resets the deck to a full, ordered set of 52 cards.
+     * Resets the deck to a full standard 52-card set (no jokers).
      */
     public final void reset() {
         cards.clear();
@@ -33,17 +36,39 @@ public class Deck {
                 cards.add(new Card(suit, rank));
             }
         }
+        if (cards.size() != DeckConstants.STANDARD_DECK_SIZE) {
+            throw new IllegalStateException(
+                    "Invalid deck composition: expected " + DeckConstants.STANDARD_DECK_SIZE + " cards, got " + cards.size());
+        }
     }
 
     /**
-     * Shuffles the deck in-place using the unbiased Fisher-Yates algorithm.
+     * Shuffles in-place using unbiased Fisher-Yates (Knuth) with {@link SecureRandom}.
      */
     public void shuffle() {
+        if (cards.size() != DeckConstants.STANDARD_DECK_SIZE) {
+            throw new IllegalStateException("Cannot shuffle: deck must contain exactly 52 cards before shuffle");
+        }
         for (int i = cards.size() - 1; i > 0; i--) {
             int j = random.nextInt(i + 1);
             Card temp = cards.get(i);
             cards.set(i, cards.get(j));
             cards.set(j, temp);
+        }
+    }
+
+    /**
+     * Verifies exactly 52 unique standard cards — call after shuffle before dealing.
+     */
+    public void assertIntegrity() {
+        if (cards.size() != DeckConstants.STANDARD_DECK_SIZE) {
+            throw new IllegalStateException(
+                    "Deck integrity failed: expected " + DeckConstants.STANDARD_DECK_SIZE + " cards, found " + cards.size());
+        }
+        Set<Card> unique = new HashSet<>(cards);
+        if (unique.size() != DeckConstants.STANDARD_DECK_SIZE) {
+            throw new IllegalStateException(
+                    "Deck integrity failed: duplicate cards detected (" + unique.size() + " unique of " + cards.size() + ")");
         }
     }
 

@@ -1,12 +1,12 @@
 package com.teenpatti.platform.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.teenpatti.platform.game.engine.*;
-import com.teenpatti.platform.lobby.config.StakeTierConfig;
+import com.teenpatti.platform.game.GameEngineService;
+import com.teenpatti.platform.game.engine.HandContextManager;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
-import com.teenpatti.platform.table.TableStatus;
-import com.teenpatti.platform.websocket.dto.*;
+import com.teenpatti.platform.websocket.dto.GameServerMessage;
+import com.teenpatti.platform.websocket.dto.GameWebSocketMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,14 +15,10 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import java.io.IOException;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 
 /**
- * WebSocket TextHandler managing real-time Teen Patti action routing, per-table serialized execution,
- * recipient-filtered broadcasts, and disconnect/reconnect flows.
+ * WebSocket handler for real-time Teen Patti actions. Game start is REST-only (host).
  */
 @Slf4j
 @Component
@@ -32,15 +28,11 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
     private final ObjectMapper objectMapper;
     private final SessionRegistry sessionRegistry;
     private final PerTableActionExecutor perTableActionExecutor;
-    private final GameStateProjector gameStateProjector;
-    private final HandSettlementService handSettlementService;
+    private final GameEngineService gameEngineService;
+    private final HandContextManager handContextManager;
     private final DisconnectGracePeriodManager disconnectGracePeriodManager;
     private final TableRepository tableRepository;
-    private final StakeTierConfig stakeTierConfig;
-
-    // Active Engine State per Table (Runtime In-Memory State)
-    private final Map<String, BettingRoundEngine> activeEngines = new ConcurrentHashMap<>();
-    private final Map<String, Instant> handStartTimeMap = new ConcurrentHashMap<>();
+    private final GameBroadcastService gameBroadcastService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -49,10 +41,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             sessionRegistry.registerUserSession(userId, session);
             boolean reconnected = disconnectGracePeriodManager.handleReconnect(userId);
             if (reconnected) {
-                log.info("User [{}] reconnected to WebSocket session within grace period.", userId);
+                log.info("User [{}] reconnected to WebSocket session.", userId);
                 String tableId = sessionRegistry.getTableIdForUser(userId);
                 if (tableId != null) {
-                    broadcastPlayerProjections(tableId);
+                    gameBroadcastService.broadcastTableState(tableId);
                 }
             }
         } else {
@@ -112,7 +104,6 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
             Table table = tableOpt.get();
             if (!table.getSeatedPlayerIds().contains(userId)) {
-                log.warn("User [{}] attempted to attach WS session to table [{}] without being seated", userId, tableId);
                 sendMessageToSession(session, GameServerMessage.actionRejected("User is not seated at table"));
                 return;
             }
@@ -120,13 +111,8 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             sessionRegistry.attachUserToTable(userId, tableId);
             disconnectGracePeriodManager.handleReconnect(userId);
 
-            // If table has >= 2 players and no active engine, initialize and start hand
-            if (table.getSeatedPlayerIds().size() >= 2 && !activeEngines.containsKey(tableId)) {
-                startNewHand(table);
-            }
-
-            // Broadcast state projection
-            broadcastPlayerProjections(tableId);
+            // No auto-start — host starts via REST; send current state only
+            gameBroadcastService.deliverPrivateHand(tableId, userId);
         });
     }
 
@@ -144,142 +130,43 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                 return;
             }
 
-            BettingRoundEngine engine = activeEngines.get(tableId);
-            if (engine == null) {
-                sendMessageToSession(session, GameServerMessage.actionRejected("No active hand currently in progress"));
+            if (handContextManager.getEngine(tableId).isEmpty()) {
+                sendMessageToSession(session, GameServerMessage.actionRejected("No active hand — waiting for host to start"));
                 return;
             }
 
-            PlayerActionType actionType;
             try {
-                actionType = PlayerActionType.valueOf(msg.getType().toUpperCase());
+                com.teenpatti.platform.game.engine.PlayerActionType.valueOf(msg.getType().toUpperCase());
             } catch (Exception e) {
                 sendMessageToSession(session, GameServerMessage.error("Invalid action type: " + msg.getType()));
                 return;
             }
 
-            PlayerAction action = PlayerAction.of(userId, actionType, msg.getAmountPaise());
-
-            try {
-                engine.applyAction(action);
-            } catch (InvalidActionException ex) {
-                log.warn("Action [{}] rejected for user [{}] on table [{}]: {}", actionType, userId, tableId, ex.getMessage());
-                // Send rejection ONLY to acting player
-                sendMessageToSession(session, GameServerMessage.actionRejected(ex.getMessage()));
-                return;
+            String rejection = gameEngineService.processAction(
+                    tableId, userId, msg.getType(), msg.getAmountPaise());
+            if (rejection != null) {
+                sendMessageToSession(session, GameServerMessage.actionRejected(rejection));
             }
-
-            // Action Succeeded -> Check Hand Completion
-            if (engine.isHandFinished()) {
-                HandOutcome outcome = engine.getOutcome();
-                String handId = UUID.randomUUID().toString();
-                Instant startedAt = handStartTimeMap.getOrDefault(tableId, Instant.now());
-
-                handSettlementService.settleCompletedHand(table, handId, outcome, startedAt);
-                activeEngines.remove(tableId);
-                handStartTimeMap.remove(tableId);
-            }
-
-            // Broadcast updated projections to all connected players at table
-            broadcastPlayerProjections(tableId);
         });
-    }
-
-    private void startNewHand(Table table) {
-        String tableId = table.getId();
-        long minBuyIn = stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
-        long maxBet = minBuyIn * 50;
-
-        GameEngineConfig engineConfig = GameEngineConfig.defaultConfig(minBuyIn, maxBet);
-        BettingRoundEngine engine = new BettingRoundEngine(engineConfig);
-
-        Deck deck = new Deck();
-        deck.shuffle();
-
-        engine.startHand(new ArrayList<>(table.getSeatedPlayerIds()), deck);
-        activeEngines.put(tableId, engine);
-        handStartTimeMap.put(tableId, Instant.now());
-
-        table.setStatus(TableStatus.IN_PROGRESS);
-        tableRepository.save(table);
-
-        log.info("Started new Teen Patti hand on table [{}] with {} players", tableId, table.getSeatedPlayerIds().size());
     }
 
     private void handleAutoFoldOnTurn(String userId, String tableId) {
         perTableActionExecutor.executeTableActionSync(tableId, () -> {
-            BettingRoundEngine engine = activeEngines.get(tableId);
-            if (engine != null && !engine.isHandFinished() && userId.equals(engine.getCurrentTurnPlayerId())) {
-                log.info("Auto-folding player [{}] on table [{}] due to disconnect turn arrival", userId, tableId);
-                try {
-                    engine.applyAction(PlayerAction.of(userId, PlayerActionType.PACK));
-                    if (engine.isHandFinished()) {
-                        Optional<Table> tableOpt = tableRepository.findById(tableId);
-                        if (tableOpt.isPresent()) {
-                            Table table = tableOpt.get();
-                            handSettlementService.settleCompletedHand(table, UUID.randomUUID().toString(), engine.getOutcome(), Instant.now());
-                            activeEngines.remove(tableId);
-                        }
-                    }
-                    broadcastPlayerProjections(tableId);
-                } catch (Exception e) {
-                    log.error("Failed auto-fold for user [{}]: {}", userId, e.getMessage(), e);
+            handContextManager.getEngine(tableId).ifPresent(engine -> {
+                if (!engine.isHandFinished() && userId.equals(engine.getCurrentTurnPlayerId())) {
+                    gameEngineService.processAutoPack(tableId, userId);
                 }
-            }
+            });
         });
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
-
-    private void broadcastPlayerProjections(String tableId) {
-        Optional<Table> tableOpt = tableRepository.findById(tableId);
-        if (tableOpt.isEmpty()) return;
-        Table table = tableOpt.get();
-        BettingRoundEngine engine = activeEngines.get(tableId);
-
-        List<String> seatedIds = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds() : List.of();
-        for (String pid : seatedIds) {
-            PlayerViewGameState projection = gameStateProjector.createProjection(table, engine, pid);
-            GameServerMessage msg = GameServerMessage.stateUpdate(projection);
-
-            if (redisTemplate != null) {
-                try {
-                    String messageJson = objectMapper.writeValueAsString(msg);
-                    TableBroadcastPayload payload = TableBroadcastPayload.builder()
-                            .tableId(tableId)
-                            .recipientUserId(pid)
-                            .messageJson(messageJson)
-                            .build();
-                    redisTemplate.convertAndSend(RedisClusterConfig.TABLE_BROADCAST_CHANNEL, objectMapper.writeValueAsString(payload));
-                } catch (Exception e) {
-                    log.error("Redis PubSub publish error for table [{}], recipient [{}]: {}", tableId, pid, e.getMessage());
-                    WebSocketSession session = sessionRegistry.getWebSocketSession(pid);
-                    if (session != null && session.isOpen()) {
-                        sendMessageToSession(session, msg);
-                    }
-                }
-            } else {
-                WebSocketSession session = sessionRegistry.getWebSocketSession(pid);
-                if (session != null && session.isOpen()) {
-                    sendMessageToSession(session, msg);
-                }
-            }
-        }
     }
 
     private void sendMessageToSession(WebSocketSession session, GameServerMessage message) {
         try {
             if (session != null && session.isOpen()) {
-                String json = objectMapper.writeValueAsString(message);
-                session.sendMessage(new TextMessage(json));
+                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(message)));
             }
-        } catch (IOException e) {
-            log.error("Failed to send WebSocket message to session [{}]: {}", session.getId(), e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to send WebSocket message: {}", e.getMessage());
         }
-    }
-
-    public BettingRoundEngine getActiveEngineForTable(String tableId) {
-        return activeEngines.get(tableId);
     }
 }

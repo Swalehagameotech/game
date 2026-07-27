@@ -2,7 +2,9 @@ package com.teenpatti.platform.notification;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.teenpatti.platform.common.exception.ResourceNotFoundException;
+import com.teenpatti.platform.notification.dto.NotificationSummaryDto;
 import com.teenpatti.platform.websocket.SessionRegistry;
+import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,7 +37,26 @@ class NotificationServiceTest {
     void setUp() {
         notificationRepository.deleteAll();
         sessionRegistry = mock(SessionRegistry.class);
-        notificationService = new NotificationService(notificationRepository, sessionRegistry, objectMapper);
+        WebSocketEventPublisher eventPublisher = mock(WebSocketEventPublisher.class);
+        notificationService = new NotificationService(notificationRepository, sessionRegistry, objectMapper, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("notifyHandCompleted notifies winner and losers")
+    void notifyHandCompleted_allParticipants() {
+        WebSocketEventPublisher eventPublisher = mock(WebSocketEventPublisher.class);
+        NotificationService service = new NotificationService(notificationRepository, sessionRegistry, objectMapper, eventPublisher);
+
+        service.notifyHandCompleted(
+                "table_abc123",
+                "hand_1",
+                "winner1",
+                9500L,
+                10_000L,
+                List.of("winner1", "loser1", "loser2"));
+
+        assertEquals(3, notificationRepository.count());
+        verify(eventPublisher, times(3)).publishNotification(anyString(), any());
     }
 
     @Test
@@ -81,7 +102,7 @@ class NotificationServiceTest {
                 .build());
 
         // Marking own notification succeeds
-        Notification read = notificationService.markAsRead("user_a", n.getId());
+        NotificationSummaryDto read = notificationService.markAsRead("user_a", n.getId());
         assertTrue(read.isRead());
 
         // Marking another user's notification throws ResourceNotFoundException

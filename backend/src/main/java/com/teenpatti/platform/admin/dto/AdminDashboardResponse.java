@@ -19,6 +19,8 @@ public class AdminDashboardResponse {
     private long totalTables;
     private long runningGames;
     private long waitingGames;
+    private long closedGames;
+    private long pendingWithdrawals;
     private long totalWalletBalance;
     private long totalWalletTransactions;
 }

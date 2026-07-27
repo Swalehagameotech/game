@@ -19,7 +19,9 @@ import java.time.Instant;
 public class LedgerEntryResponse {
     private String id;
     private LedgerEntryType type;
+    private String typeLabel;
     private long amountPaise;
+    private String formattedAmount;
     private long balanceAfterPaise;
     private String referenceId;
     private LedgerStatus status;

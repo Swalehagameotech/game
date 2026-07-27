@@ -30,6 +30,12 @@ public class MatchHistory {
     @Indexed
     private String tableId;
 
+    @Indexed
+    private String handId;
+
+    @Builder.Default
+    private int roundNumber = 1;
+
     private List<String> playerIds;
 
     private String winnerId;

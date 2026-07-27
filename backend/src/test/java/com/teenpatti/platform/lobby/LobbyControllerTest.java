@@ -128,14 +128,14 @@ class LobbyControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/lobby/tables returns public non-full tables and excludes full tables")
+    @DisplayName("GET /api/lobby/tables returns public non-closed tables")
     void getPublicTables_ExcludesFullAndPrivateTables() throws Exception {
         mockMvc.perform(get("/api/lobby/tables?page=0&size=10")
                         .header("Authorization", "Bearer " + richToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.content.length()").value(2))
-                .andExpect(jsonPath("$.data.totalElements").value(2));
+                .andExpect(jsonPath("$.data.content.length()").value(3))
+                .andExpect(jsonPath("$.data.totalElements").value(3));
     }
 
     @Test
@@ -172,7 +172,7 @@ class LobbyControllerTest {
         mockMvc.perform(get("/api/lobby/tables")
                         .header("Authorization", "Bearer " + richToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.content.length()").value(2)); // Only the 2 public tables
+                .andExpect(jsonPath("$.data.content.length()").value(3)); // Public tables only (private excluded)
 
         // Verify private table lookup by invite code succeeds
         mockMvc.perform(get("/api/lobby/tables/private/" + inviteCode)

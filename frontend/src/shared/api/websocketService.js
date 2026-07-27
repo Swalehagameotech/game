@@ -9,6 +9,9 @@ class WebSocketGameService {
 
   connect(token, onMessageCallback, onStatusChangeCallback) {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      if (onMessageCallback) {
+        this.listeners.add(onMessageCallback);
+      }
       return;
     }
 
@@ -57,7 +60,9 @@ class WebSocketGameService {
 
   subscribe(listener) {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   sendMessage(type, tableId, extraData = {}) {

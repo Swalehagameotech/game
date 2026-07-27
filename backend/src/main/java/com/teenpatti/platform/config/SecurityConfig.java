@@ -61,7 +61,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/transactions/webhook/razorpay").permitAll()
+                        .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/tables", "/api/lobby/tables").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/users/online/count").permitAll()
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/users/*/public").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().authenticated()

@@ -1,6 +1,9 @@
 package com.teenpatti.platform.user;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
 
 import java.util.Optional;
 
@@ -23,5 +26,10 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     boolean existsByDisplayNameAndIdNot(String displayName, String id);
 
-    org.springframework.data.domain.Page<User> findByKycStatus(KycStatus kycStatus, org.springframework.data.domain.Pageable pageable);
+    long countByIsOnlineTrue();
+
+    Page<User> findByKycStatus(KycStatus kycStatus, Pageable pageable);
+
+    @Query("{ '$or': [ { 'email': { '$regex': ?0, '$options': 'i' } }, { 'displayName': { '$regex': ?0, '$options': 'i' } } ] }")
+    Page<User> searchByEmailOrDisplayName(String query, Pageable pageable);
 }

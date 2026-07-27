@@ -16,13 +16,20 @@ import java.util.List;
 @AllArgsConstructor
 public class TableDetailResponse {
     private String tableId;
+    private String tableName;
+    private String hostId;
     private TableType tableType;
     private StakeTier stakeTier;
+    private int minPlayers;
     private int maxPlayers;
     private int currentPlayerCount;
     private TableStatus status;
     private long potPaise;
+    private long bootAmountPaise;
     private String currentHandId;
+    private String currentTurnUserId;
+    private int countdownSeconds;
+    private String inviteCode;
     private List<SeatedPlayerResponse> seatedPlayers;
     private List<String> leftMidHandPlayerIds;
 }

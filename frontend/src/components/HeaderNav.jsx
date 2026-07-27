@@ -9,6 +9,7 @@ export default function HeaderNav({
   onOpenLeaderboard,
   onOpenNotifications,
   onOpenAdmin,
+  onOpenProfile,
 }) {
   const { user, isAuthenticated, logout } = useAuth();
   const { unreadNotificationsCount } = useGame();
@@ -89,9 +90,13 @@ export default function HeaderNav({
 
               {/* User Avatar & Logout */}
               <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
-                <div className="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 flex items-center justify-center font-bold text-xs border border-slate-700">
+                <button
+                  onClick={onOpenProfile}
+                  className="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 flex items-center justify-center font-bold text-xs border border-slate-700 hover:border-amber-500/50 cursor-pointer transition-all"
+                  title="My Profile"
+                >
                   {user?.displayName ? user.displayName.charAt(0).toUpperCase() : 'U'}
-                </div>
+                </button>
                 <button
                   onClick={logout}
                   className="p-2 text-slate-400 hover:text-rose-400 transition-all cursor-pointer"

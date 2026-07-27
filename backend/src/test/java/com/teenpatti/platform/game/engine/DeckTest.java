@@ -42,4 +42,20 @@ class DeckTest {
         assertEquals(3, dealt.size());
         assertEquals(49, deck.remainingCards());
     }
+
+    @Test
+    @DisplayName("assertIntegrity fails when deck is incomplete")
+    void assertIntegrity_rejectsIncompleteDeck() {
+        Deck deck = new Deck();
+        deck.deal(1);
+        assertThrows(IllegalStateException.class, deck::assertIntegrity);
+    }
+
+    @Test
+    @DisplayName("shuffle rejects deck that is not full 52 cards")
+    void shuffle_rejectsPartialDeck() {
+        Deck deck = new Deck();
+        deck.deal(1);
+        assertThrows(IllegalStateException.class, deck::shuffle);
+    }
 }

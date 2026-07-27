@@ -146,5 +146,16 @@ public class RazorpayWebhookService {
         depositRequestRepository.save(depositRequest);
 
         log.info("Marked DepositRequest [{}] as FAILED for order [{}]", depositRequest.getId(), depositRequest.getGatewayOrderId());
+
+        if (notificationService != null) {
+            long rupees = depositRequest.getAmountPaise() / 100;
+            notificationService.notify(
+                    depositRequest.getUserId(),
+                    com.teenpatti.platform.notification.NotificationType.DEPOSIT_FAILED,
+                    "Deposit Failed",
+                    "Your deposit of ₹" + rupees + " could not be processed. Please try again or contact support.",
+                    java.util.Map.of("depositRequestId", depositRequest.getId(), "gatewayOrderId", depositRequest.getGatewayOrderId())
+            );
+        }
     }
 }

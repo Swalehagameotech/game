@@ -1,12 +1,13 @@
 package com.teenpatti.platform.auth.dto;
 
+import com.teenpatti.platform.home.dto.HomeDashboardResponse;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Authentication response payload DTO containing issued tokens and user profile.
+ * Authentication response payload: issued tokens, user profile, and full session aggregate.
  */
 @Data
 @Builder
@@ -22,4 +23,5 @@ public class AuthResponse {
 
     private long expiresIn;
     private UserProfileDto user;
+    private HomeDashboardResponse dashboard;
 }

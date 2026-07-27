@@ -29,7 +29,10 @@ import java.util.List;
 @AllArgsConstructor
 @Document(collection = "tables")
 @CompoundIndexes({
-    @CompoundIndex(name = "table_type_status_stake_idx", def = "{'tableType': 1, 'status': 1, 'stakeTier': 1}")
+    @CompoundIndex(name = "table_type_status_stake_idx", def = "{'tableType': 1, 'status': 1, 'stakeTier': 1}"),
+    @CompoundIndex(name = "table_type_status_boot_idx", def = "{'tableType': 1, 'status': 1, 'bootAmountPaise': 1}"),
+    @CompoundIndex(name = "status_updated_idx", def = "{'status': 1, 'updatedAt': -1}"),
+    @CompoundIndex(name = "host_status_idx", def = "{'hostId': 1, 'status': 1}")
 })
 public class Table {
 
@@ -50,7 +53,7 @@ public class Table {
     private StakeTier stakeTier = StakeTier.LOW;
 
     @Builder.Default
-    private GameVariant gameVariant = GameVariant.HIGHER;
+    private GameVariant gameVariant = GameVariant.CLASSIC;
 
     @Builder.Default
     private long bootAmountPaise = 1000L;
@@ -66,6 +69,18 @@ public class Table {
 
     @Builder.Default
     private List<String> seatedPlayerIds = new ArrayList<>();
+
+    /**
+     * Ordered seat assignments. Mirrors {@link #seatedPlayerIds} with join timestamps.
+     */
+    @Builder.Default
+    private List<TableSeat> seatMap = new ArrayList<>();
+
+    /**
+     * Public-table auto-start countdown (5..0). Zero when not counting down.
+     */
+    @Builder.Default
+    private int countdownSeconds = 0;
 
     /**
      * List of user IDs who left the table while a hand was IN_PROGRESS.

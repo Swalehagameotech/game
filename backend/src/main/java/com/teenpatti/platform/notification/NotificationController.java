@@ -2,6 +2,7 @@ package com.teenpatti.platform.notification;
 
 import com.teenpatti.platform.common.response.ApiResponse;
 import com.teenpatti.platform.common.security.CurrentUser;
+import com.teenpatti.platform.notification.dto.NotificationSummaryDto;
 import com.teenpatti.platform.notification.dto.UnreadCountResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -17,17 +18,19 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @GetMapping
-    public ResponseEntity<Page<Notification>> getNotifications(
+    public ResponseEntity<ApiResponse<Page<NotificationSummaryDto>>> getNotifications(
             @CurrentUser String userId,
             Pageable pageable) {
-        return ResponseEntity.ok(notificationService.getUserNotifications(userId, pageable));
+        Page<NotificationSummaryDto> page = notificationService.getUserNotifications(userId, pageable);
+        return ResponseEntity.ok(ApiResponse.success("Notifications retrieved successfully", page));
     }
 
     @PostMapping("/{notificationId}/read")
-    public ResponseEntity<Notification> markAsRead(
+    public ResponseEntity<ApiResponse<NotificationSummaryDto>> markAsRead(
             @CurrentUser String userId,
             @PathVariable String notificationId) {
-        return ResponseEntity.ok(notificationService.markAsRead(userId, notificationId));
+        NotificationSummaryDto updated = notificationService.markAsRead(userId, notificationId);
+        return ResponseEntity.ok(ApiResponse.success("Notification marked as read", updated));
     }
 
     @PostMapping("/read-all")
@@ -37,8 +40,8 @@ public class NotificationController {
     }
 
     @GetMapping("/unread-count")
-    public ResponseEntity<UnreadCountResponse> getUnreadCount(@CurrentUser String userId) {
+    public ResponseEntity<ApiResponse<UnreadCountResponse>> getUnreadCount(@CurrentUser String userId) {
         long count = notificationService.getUnreadCount(userId);
-        return ResponseEntity.ok(new UnreadCountResponse(count));
+        return ResponseEntity.ok(ApiResponse.success("Unread count retrieved", new UnreadCountResponse(count)));
     }
 }

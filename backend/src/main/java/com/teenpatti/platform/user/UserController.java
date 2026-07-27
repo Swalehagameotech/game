@@ -2,16 +2,24 @@ package com.teenpatti.platform.user;
 
 import com.teenpatti.platform.common.response.ApiResponse;
 import com.teenpatti.platform.common.security.CurrentUser;
+import com.teenpatti.platform.user.dto.ChangePasswordRequest;
+import com.teenpatti.platform.user.dto.OnlinePlayersResponse;
 import com.teenpatti.platform.user.dto.PublicProfileResponse;
 import com.teenpatti.platform.user.dto.UpdateProfileRequest;
 import com.teenpatti.platform.user.dto.UserProfileResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 /**
- * REST Controller exposing User module endpoints.
+ * User profile and presence endpoints. KYC submission is intentionally omitted until a later module.
  */
 @RestController
 @RequestMapping("/api/users")
@@ -24,6 +32,12 @@ public class UserController {
     public ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(@CurrentUser String userId) {
         UserProfileResponse profile = userService.getUserProfile(userId);
         return ResponseEntity.ok(ApiResponse.success("User profile retrieved successfully", profile));
+    }
+
+    @GetMapping("/online/count")
+    public ResponseEntity<ApiResponse<OnlinePlayersResponse>> getOnlineCount() {
+        OnlinePlayersResponse response = userService.getOnlinePlayersCount();
+        return ResponseEntity.ok(ApiResponse.success("Online player count retrieved", response));
     }
 
     @GetMapping("/{userId}/public")
@@ -40,14 +54,24 @@ public class UserController {
         return ResponseEntity.ok(ApiResponse.success("Profile updated successfully", updatedProfile));
     }
 
-    @PostMapping("/me/kyc")
-    public ResponseEntity<ApiResponse<UserProfileResponse>> submitKyc(
+    @PostMapping("/me/password")
+    public ResponseEntity<ApiResponse<Void>> changePassword(
             @CurrentUser String userId,
-            @Valid @RequestBody com.teenpatti.platform.admin.dto.KycSubmissionRequest request,
-            @org.springframework.beans.factory.annotation.Autowired com.teenpatti.platform.admin.AdminKycService adminKycService) {
-        User user = adminKycService.submitKyc(userId, request);
-        UserProfileResponse response = userService.getUserProfile(user.getId());
-        return ResponseEntity.ok(ApiResponse.success("KYC submission received and pending review", response));
+            @Valid @RequestBody ChangePasswordRequest request) {
+        userService.changePassword(userId, request);
+        return ResponseEntity.ok(ApiResponse.success("Password changed successfully", null));
+    }
+
+    @PostMapping("/me/presence/heartbeat")
+    public ResponseEntity<ApiResponse<UserProfileResponse>> heartbeat(@CurrentUser String userId) {
+        UserProfileResponse profile = userService.recordHeartbeat(userId);
+        return ResponseEntity.ok(ApiResponse.success("Presence updated", profile));
+    }
+
+    @PostMapping("/me/presence/offline")
+    public ResponseEntity<ApiResponse<Void>> goOffline(@CurrentUser String userId) {
+        userService.markOffline(userId);
+        return ResponseEntity.ok(ApiResponse.success("Marked offline", null));
     }
 
     @PostMapping("/tutorial/complete")

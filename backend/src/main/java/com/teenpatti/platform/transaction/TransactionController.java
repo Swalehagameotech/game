@@ -37,7 +37,7 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponse.success("Webhook processed successfully", null));
     }
 
-    @PostMapping("/withdraw/request")
+    @PostMapping({"/withdraw/request", "/withdrawal/request"})
     public ResponseEntity<ApiResponse<WithdrawalResponse>> requestWithdrawal(
             @CurrentUser String userId,
             @Valid @RequestBody InitiateWithdrawalRequest request) {

@@ -1,19 +1,22 @@
 package com.teenpatti.platform.admin;
 
+import com.teenpatti.platform.admin.dto.AdminAnnouncementRequest;
 import com.teenpatti.platform.admin.dto.AdminDashboardResponse;
+import com.teenpatti.platform.admin.dto.AdminUserSummaryDto;
 import com.teenpatti.platform.common.response.ApiResponse;
-import com.teenpatti.platform.user.User;
+import com.teenpatti.platform.transaction.LedgerEntry;
 import com.teenpatti.platform.wallet.WalletTransaction;
+import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -22,6 +25,8 @@ import java.util.List;
 public class AdminPanelController {
 
     private final AdminPanelService adminPanelService;
+    private final AdminWalletService adminWalletService;
+    private final AdminAnnouncementService adminAnnouncementService;
 
     @Data
     public static class WalletAdjustmentRequest {
@@ -31,66 +36,52 @@ public class AdminPanelController {
 
     @GetMapping("/dashboard")
     public ResponseEntity<ApiResponse<AdminDashboardResponse>> getDashboardStats() {
-        AdminDashboardResponse stats = adminPanelService.getDashboardStats();
-        return ResponseEntity.ok(ApiResponse.success(stats));
+        return ResponseEntity.ok(ApiResponse.success(adminPanelService.getDashboardStats()));
     }
 
     @GetMapping("/users")
-    public ResponseEntity<ApiResponse<Page<User>>> searchUsers(
+    public ResponseEntity<ApiResponse<Page<AdminUserSummaryDto>>> searchUsers(
             @RequestParam(required = false) String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<User> users = adminPanelService.searchUsers(query, page, size);
-        return ResponseEntity.ok(ApiResponse.success(users));
+        return ResponseEntity.ok(ApiResponse.success(adminPanelService.searchUsers(query, page, size)));
     }
 
     @GetMapping("/users/{userId}")
-    public ResponseEntity<ApiResponse<User>> getUserProfile(@PathVariable String userId) {
-        User user = adminPanelService.getUserProfile(userId);
-        return ResponseEntity.ok(ApiResponse.success(user));
+    public ResponseEntity<ApiResponse<AdminUserSummaryDto>> getUserProfile(@PathVariable String userId) {
+        return ResponseEntity.ok(ApiResponse.success(adminPanelService.getUserProfile(userId)));
     }
 
     @GetMapping("/users/{userId}/wallet/history")
     public ResponseEntity<ApiResponse<List<WalletTransaction>>> getUserWalletHistory(@PathVariable String userId) {
-        List<WalletTransaction> history = adminPanelService.getUserWalletHistory(userId);
-        return ResponseEntity.ok(ApiResponse.success(history));
+        return ResponseEntity.ok(ApiResponse.success(adminPanelService.getUserWalletHistory(userId)));
     }
 
     @PostMapping("/users/{userId}/wallet/add")
-    public ResponseEntity<ApiResponse<User>> addMoney(
-            @AuthenticationPrincipal UserDetails admin,
+    public ResponseEntity<ApiResponse<LedgerEntry>> addMoney(
+            @AuthenticationPrincipal String adminUserId,
             @PathVariable String userId,
             @RequestBody WalletAdjustmentRequest request) {
-        String adminId = admin != null ? admin.getUsername() : "admin";
-        User updated = adminPanelService.addMoneyToUserWallet(adminId, userId, request.getAmount(), request.getReason());
-        return ResponseEntity.ok(ApiResponse.success(updated));
+        LedgerEntry entry = adminWalletService.adjustBalance(
+                adminUserId, userId, request.getAmount(), request.getReason());
+        return ResponseEntity.ok(ApiResponse.success(entry));
     }
 
     @PostMapping("/users/{userId}/wallet/deduct")
-    public ResponseEntity<ApiResponse<User>> deductMoney(
-            @AuthenticationPrincipal UserDetails admin,
+    public ResponseEntity<ApiResponse<LedgerEntry>> deductMoney(
+            @AuthenticationPrincipal String adminUserId,
             @PathVariable String userId,
             @RequestBody WalletAdjustmentRequest request) {
-        String adminId = admin != null ? admin.getUsername() : "admin";
-        User updated = adminPanelService.deductMoneyFromUserWallet(adminId, userId, request.getAmount(), request.getReason());
-        return ResponseEntity.ok(ApiResponse.success(updated));
+        LedgerEntry entry = adminWalletService.adjustBalance(
+                adminUserId, userId, -Math.abs(request.getAmount()), request.getReason());
+        return ResponseEntity.ok(ApiResponse.success(entry));
     }
 
-    @PostMapping("/users/{userId}/block")
-    public ResponseEntity<ApiResponse<User>> blockUser(
-            @AuthenticationPrincipal UserDetails admin,
-            @PathVariable String userId) {
-        String adminId = admin != null ? admin.getUsername() : "admin";
-        User updated = adminPanelService.blockUser(adminId, userId);
-        return ResponseEntity.ok(ApiResponse.success(updated));
-    }
-
-    @PostMapping("/users/{userId}/unblock")
-    public ResponseEntity<ApiResponse<User>> unblockUser(
-            @AuthenticationPrincipal UserDetails admin,
-            @PathVariable String userId) {
-        String adminId = admin != null ? admin.getUsername() : "admin";
-        User updated = adminPanelService.unblockUser(adminId, userId);
-        return ResponseEntity.ok(ApiResponse.success(updated));
+    @PostMapping("/announcements")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> broadcastAnnouncement(
+            @AuthenticationPrincipal String adminUserId,
+            @Valid @RequestBody AdminAnnouncementRequest request) {
+        int count = adminAnnouncementService.broadcastAnnouncement(adminUserId, request);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("recipientCount", count)));
     }
 }

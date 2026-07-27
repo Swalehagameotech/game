@@ -38,7 +38,11 @@ public class TableService {
     private final WalletService walletService;
     private final StakeTierConfig stakeTierConfig;
     private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
-    private final com.teenpatti.platform.game.engine.GameLoopOrchestrator gameLoopOrchestrator;
+    private final com.teenpatti.platform.game.GameEngineService gameEngineService;
+    private final PublicTableCountdownService publicTableCountdownService;
+    private final TableCountdownRegistry countdownRegistry;
+    private final PublicTableService publicTableService;
+    private final PrivateTableService privateTableService;
 
     public List<Table> getTablesByStatus(TableStatus status) {
         return tableRepository.findByStatus(status);
@@ -67,86 +71,69 @@ public class TableService {
             throw new TableNotFoundException("Table is closed: " + tableId);
         }
 
+        if (initialTable.getTableType() == TableType.PUBLIC) {
+            publicTableService.assertJoinable(initialTable);
+        } else if (initialTable.getTableType() == TableType.PRIVATE) {
+            privateTableService.assertJoinable(initialTable);
+        }
+
         // Idempotency: If user is already seated, return existing seat details
         if (initialTable.getSeatedPlayerIds().contains(userId)) {
             log.info("IDEMPOTENT JOIN: User [{}] is already seated at table [{}]", userId, tableId);
             int seatIndex = initialTable.getSeatedPlayerIds().indexOf(userId);
-            long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(initialTable.getStakeTier());
+            long bootPaise = resolveBootPaise(initialTable);
             return JoinTableResponse.builder()
                     .tableId(tableId)
                     .seatIndex(seatIndex)
-                    .heldBuyInPaise(buyInAmountPaise)
+                    .heldBuyInPaise(bootPaise)
                     .tableDetail(buildTableDetailResponse(initialTable))
                     .build();
         }
 
-        long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(initialTable.getStakeTier());
+        long bootPaise = resolveBootPaise(initialTable);
 
-        // Pre-validate balance
+        // Pre-validate balance for boot (collected when host starts game)
         WalletBalanceResponse balanceResponse = walletService.getBalance(userId);
-        if (balanceResponse.getBalancePaise() < buyInAmountPaise) {
+        if (balanceResponse.getBalancePaise() < bootPaise) {
             throw new InsufficientBalanceException(
-                    "Insufficient wallet balance. Required buy-in: " + buyInAmountPaise +
+                    "Insufficient wallet balance. Required boot: " + bootPaise +
                             " paise, available: " + balanceResponse.getBalancePaise() + " paise."
             );
         }
 
         // 2. Atomic Seat Claim Loop via Optimistic Locking
-        Table claimedTable = executeAtomicSeatClaim(userId, tableId, buyInAmountPaise);
-
-        // 3. Debit Buy-In via Wallet Module
-        String referenceId = "table:" + tableId + ":buyin:" + userId;
-        try {
-            walletService.applyLedgerEntry(userId, LedgerEntryType.BET, buyInAmountPaise, referenceId);
-        } catch (Exception ex) {
-            log.error("Debit failed for user [{}] after seat claim on table [{}]. Triggering seat claim rollback.",
-                    userId, tableId, ex);
-            rollbackSeatClaim(userId, tableId);
-            throw ex;
-        }
+        Table claimedTable = executeAtomicSeatClaim(userId, tableId);
 
         int seatIndex = claimedTable.getSeatedPlayerIds().indexOf(userId);
-        log.info("User [{}] successfully seated at table [{}] at seat index [{}] with held buy-in {} paise",
-                userId, tableId, seatIndex, buyInAmountPaise);
+        log.info("User [{}] successfully seated at table [{}] at seat index [{}]",
+                userId, tableId, seatIndex);
 
         webSocketEventPublisher.publishPlayerJoined(tableId, userId, claimedTable.getSeatedPlayerIds().size());
 
         int minReq = claimedTable.getMinPlayers() > 0 ? claimedTable.getMinPlayers() : 3;
-        gameLoopOrchestrator.handlePlayerSeated(tableId, claimedTable.getSeatedPlayerIds().size(), minReq);
+        gameEngineService.handlePlayerSeated(tableId, claimedTable.getSeatedPlayerIds().size(), minReq);
+        publicTableService.afterPublicTableMutation(tableId);
 
         return JoinTableResponse.builder()
                 .tableId(tableId)
                 .seatIndex(seatIndex)
-                .heldBuyInPaise(buyInAmountPaise)
+                .heldBuyInPaise(bootPaise)
                 .tableDetail(buildTableDetailResponse(claimedTable))
                 .build();
     }
 
     /**
-     * Manually starts the game round when minimum required players (e.g. 3) have seated (Option 2).
+     * Host-only manual start: shuffle, deal, collect boot, begin RUNNING hand.
      */
     public TableDetailResponse startGame(String userId, String tableId) {
         Table table = tableRepository.findById(tableId)
                 .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
-
-        if (table.getStatus() != TableStatus.WAITING) {
-            throw new IllegalStateException("Game is already in progress or closed");
+        if (table.getTableType() == TableType.PRIVATE) {
+            privateTableService.assertHostCanStart(table, userId);
+        } else {
+            publicTableService.assertHostStartAllowed(table);
         }
-
-        int seatedCount = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
-        int minRequired = table.getMinPlayers() > 0 ? table.getMinPlayers() : 3;
-
-        if (seatedCount < minRequired) {
-            throw new IllegalStateException("Minimum " + minRequired + " players required to start game. Current seated: " + seatedCount);
-        }
-
-        table.setStatus(TableStatus.IN_PROGRESS);
-        table.setUpdatedAt(Instant.now());
-        Table saved = tableRepository.save(table);
-
-        log.info("Host/Player [{}] manually started game on table [{}] with [{}] players", userId, tableId, seatedCount);
-        webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(saved));
-
+        Table saved = gameEngineService.startGame(userId, tableId);
         return buildTableDetailResponse(saved);
     }
 
@@ -162,36 +149,35 @@ public class TableService {
         }
 
         TableStatus currentStatus = initialTable.getStatus();
-        long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(initialTable.getStakeTier());
-
         executeAtomicLeave(userId, tableId);
         int updatedCount = Math.max(0, initialTable.getSeatedPlayerIds().size() - 1);
         webSocketEventPublisher.publishPlayerLeft(tableId, userId, updatedCount);
 
         int minReq = initialTable.getMinPlayers() > 0 ? initialTable.getMinPlayers() : 3;
-        gameLoopOrchestrator.handlePlayerLeft(tableId, updatedCount, minReq);
+        gameEngineService.handlePlayerLeft(tableId, updatedCount, minReq);
+        publicTableService.afterPublicTableMutation(tableId);
 
-        if (currentStatus == TableStatus.WAITING) {
-            // Full refund
-            String referenceId = "table:" + tableId + ":refund:" + userId;
-            walletService.applyLedgerEntry(userId, LedgerEntryType.REFUND, buyInAmountPaise, referenceId);
-            log.info("User [{}] left WAITING table [{}]. Fully refunded buy-in {} paise", userId, tableId, buyInAmountPaise);
-            return LeaveTableResponse.builder()
-                    .tableId(tableId)
-                    .refunded(true)
-                    .refundAmountPaise(buyInAmountPaise)
-                    .message("Successfully left table. Held buy-in fully refunded.")
-                    .build();
-        } else {
-            // Mid-hand forfeiture (no refund)
-            log.info("User [{}] left IN_PROGRESS table [{}]. Buy-in {} paise forfeited to pot.", userId, tableId, buyInAmountPaise);
+        if (updatedCount == 0) {
+            closeEmptyTable(tableId);
+        }
+
+        if (isActiveHandStatus(currentStatus)) {
+            log.info("User [{}] left active hand on table [{}].", userId, tableId);
             return LeaveTableResponse.builder()
                     .tableId(tableId)
                     .refunded(false)
                     .refundAmountPaise(0L)
-                    .message("Left table mid-hand. Buy-in forfeited to table pot.")
+                    .message("Left table mid-hand.")
                     .build();
         }
+
+        log.info("User [{}] left WAITING table [{}].", userId, tableId);
+        return LeaveTableResponse.builder()
+                .tableId(tableId)
+                .refunded(false)
+                .refundAmountPaise(0L)
+                .message("Successfully left table.")
+                .build();
     }
 
     /**
@@ -206,6 +192,25 @@ public class TableService {
         }
 
         return buildTableDetailResponse(table);
+    }
+
+    /**
+     * Returns sanitized active hand metadata — no deck or private card data.
+     */
+    public com.teenpatti.platform.game.dto.GameSessionSummaryDto getActiveGameSession(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+
+        if (table.getTableType() == TableType.PRIVATE && !table.getSeatedPlayerIds().contains(userId)) {
+            throw new TableNotFoundException("Private table not found or user not authorized.");
+        }
+        if (!table.getSeatedPlayerIds().contains(userId)) {
+            throw new com.teenpatti.platform.common.exception.PlayerNotSeatedException(
+                    "Player is not seated at table: " + tableId);
+        }
+
+        return gameEngineService.getActiveSession(tableId)
+                .orElseThrow(() -> new TableNotFoundException("No active game session on this table"));
     }
 
     /**
@@ -237,20 +242,11 @@ public class TableService {
             throw new IllegalStateException("Only the table creator can delete this table.");
         }
 
-        if (table.getStatus() == TableStatus.IN_PROGRESS || table.getStatus() == TableStatus.PLAYING) {
+        if (table.getStatus() == TableStatus.IN_PROGRESS
+                || table.getStatus() == TableStatus.PLAYING
+                || table.getStatus() == TableStatus.RUNNING
+                || table.getStatus() == TableStatus.STARTING) {
             throw new IllegalStateException("Cannot delete a table while a hand is in progress.");
-        }
-
-        if (table.getSeatedPlayerIds() != null && !table.getSeatedPlayerIds().isEmpty()) {
-            long buyInAmountPaise = stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
-            for (String playerId : table.getSeatedPlayerIds()) {
-                String refId = "table:" + tableId + ":delete_refund:" + playerId;
-                try {
-                    walletService.applyLedgerEntry(playerId, LedgerEntryType.REFUND, buyInAmountPaise, refId);
-                } catch (Exception ex) {
-                    log.warn("Error refunding buy-in to user [{}] on table deletion", playerId, ex);
-                }
-            }
         }
 
         tableRepository.deleteById(tableId);
@@ -296,7 +292,7 @@ public class TableService {
         return false;
     }
 
-    private Table executeAtomicSeatClaim(String userId, String tableId, long buyInAmountPaise) {
+    private Table executeAtomicSeatClaim(String userId, String tableId) {
         int attempts = 0;
         while (attempts < MAX_OPTIMISTIC_LOCK_RETRIES) {
             attempts++;
@@ -316,7 +312,7 @@ public class TableService {
                     throw new TableFullException("Table is full (max players: " + table.getMaxPlayers() + ")");
                 }
 
-                table.getSeatedPlayerIds().add(userId);
+                TableSeatHelper.assignSeat(table, userId);
                 return tableRepository.save(table);
             } catch (OptimisticLockingFailureException ex) {
                 log.warn("Optimistic lock collision on seat claim attempt {}/{} for user [{}] on table [{}]",
@@ -338,7 +334,8 @@ public class TableService {
                 Optional<Table> opt = tableRepository.findById(tableId);
                 if (opt.isEmpty()) return;
                 Table table = opt.get();
-                if (table.getSeatedPlayerIds().remove(userId)) {
+                if (table.getSeatedPlayerIds().contains(userId)) {
+                    TableSeatHelper.removeSeat(table, userId);
                     tableRepository.save(table);
                     log.info("Rolled back seat claim for user [{}] on table [{}]", userId, tableId);
                 }
@@ -361,11 +358,22 @@ public class TableService {
                     return;
                 }
 
-                table.getSeatedPlayerIds().remove(userId);
-                if (table.getStatus() == TableStatus.IN_PROGRESS) {
+                TableSeatHelper.removeSeat(table, userId);
+                if (isActiveHandStatus(table.getStatus())) {
                     if (!table.getLeftMidHandPlayerIds().contains(userId)) {
                         table.getLeftMidHandPlayerIds().add(userId);
                     }
+                }
+
+                int minReq = table.getMinPlayers() > 0 ? table.getMinPlayers() : 3;
+                if (table.getSeatedPlayerIds().size() < minReq
+                        && table.getStatus() == TableStatus.ROUND_END) {
+                    table.setStatus(TableStatus.WAITING);
+                }
+
+                if (table.getSeatedPlayerIds().isEmpty()) {
+                    table.setStatus(TableStatus.CLOSED);
+                    table.setCountdownSeconds(0);
                 }
 
                 tableRepository.save(table);
@@ -379,6 +387,17 @@ public class TableService {
                 backoffDelay();
             }
         }
+    }
+
+    private void closeEmptyTable(String tableId) {
+        countdownRegistry.cancel(tableId);
+        tableRepository.findById(tableId).ifPresent(table -> {
+            table.setStatus(TableStatus.CLOSED);
+            table.setCountdownSeconds(0);
+            tableRepository.save(table);
+            webSocketEventPublisher.publishTableClosed(tableId);
+            log.info("Table [{}] closed — all players left", tableId);
+        });
     }
 
     private TableDetailResponse buildTableDetailResponse(Table table) {
@@ -395,16 +414,38 @@ public class TableService {
 
         return TableDetailResponse.builder()
                 .tableId(table.getId())
+                .tableName(table.getTableName())
+                .hostId(table.getHostId())
                 .tableType(table.getTableType())
                 .stakeTier(table.getStakeTier())
+                .minPlayers(table.getMinPlayers() > 0 ? table.getMinPlayers() : 3)
                 .maxPlayers(table.getMaxPlayers())
                 .currentPlayerCount(seatedPlayers.size())
                 .status(table.getStatus())
                 .potPaise(table.getPotPaise())
+                .bootAmountPaise(resolveBootPaise(table))
                 .currentHandId(table.getCurrentHandId())
+                .currentTurnUserId(table.getCurrentTurnUserId())
+                .countdownSeconds(table.getCountdownSeconds())
+                .inviteCode(table.getInviteCode())
                 .seatedPlayers(seatedPlayers)
                 .leftMidHandPlayerIds(table.getLeftMidHandPlayerIds() != null ? table.getLeftMidHandPlayerIds() : List.of())
                 .build();
+    }
+
+    private long resolveBootPaise(Table table) {
+        if (table.getBootAmountPaise() > 0) {
+            return table.getBootAmountPaise();
+        }
+        return stakeTierConfig.getMinBuyInPaise(table.getStakeTier());
+    }
+
+    private boolean isActiveHandStatus(TableStatus status) {
+        return status == TableStatus.IN_PROGRESS
+                || status == TableStatus.PLAYING
+                || status == TableStatus.RUNNING
+                || status == TableStatus.STARTING
+                || status == TableStatus.SHOW;
     }
 
     private void backoffDelay() {

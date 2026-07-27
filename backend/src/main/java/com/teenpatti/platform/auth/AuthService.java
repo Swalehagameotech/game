@@ -5,10 +5,13 @@ import com.teenpatti.platform.common.exception.AccountStatusException;
 import com.teenpatti.platform.common.exception.BadCredentialsException;
 import com.teenpatti.platform.common.exception.DuplicateUserException;
 import com.teenpatti.platform.common.exception.InvalidTokenException;
+import com.teenpatti.platform.home.SessionAggregateService;
+import com.teenpatti.platform.home.dto.HomeDashboardResponse;
 import com.teenpatti.platform.user.AccountStatus;
 import com.teenpatti.platform.user.KycStatus;
 import com.teenpatti.platform.user.User;
 import com.teenpatti.platform.user.UserRepository;
+import com.teenpatti.platform.user.UserPresenceService;
 import com.teenpatti.platform.wallet.Wallet;
 import com.teenpatti.platform.wallet.WalletRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +36,8 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final UserPresenceService userPresenceService;
+    private final SessionAggregateService sessionAggregateService;
 
     /**
      * Atomically registers a new User and initializes an empty Wallet (balancePaise = 0).
@@ -174,11 +179,14 @@ public class AuthService {
         refreshTokenRepository.findByTokenHash(tokenHash).ifPresent(token -> {
             token.setRevoked(true);
             refreshTokenRepository.save(token);
+            userPresenceService.markOffline(token.getUserId());
             log.info("Revoked refresh token for user [{}]", token.getUserId());
         });
     }
 
     private AuthResponse createAuthSession(User user) {
+        userPresenceService.markOnline(user.getId());
+        HomeDashboardResponse dashboard = sessionAggregateService.buildSessionAggregate(user.getId());
         String accessToken = jwtTokenProvider.generateAccessToken(user.getId());
         String refreshTokenStr = jwtTokenProvider.generateRefreshToken(user.getId());
 
@@ -199,6 +207,7 @@ public class AuthService {
                 .tokenType("Bearer")
                 .expiresIn(jwtTokenProvider.getAccessExpirationMs() / 1000)
                 .user(UserProfileDto.fromUser(user))
+                .dashboard(dashboard)
                 .build();
     }
 }

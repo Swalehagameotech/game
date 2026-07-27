@@ -1,13 +1,20 @@
 package com.teenpatti.platform.config;
 
 import com.teenpatti.platform.admin.AdminActionLog;
+import com.teenpatti.platform.admin.AdminLog;
+import com.teenpatti.platform.auth.RefreshToken;
+import com.teenpatti.platform.game.GameHistory;
+import com.teenpatti.platform.game.GameSession;
 import com.teenpatti.platform.game.MatchHistory;
 import com.teenpatti.platform.notification.Notification;
 import com.teenpatti.platform.table.Table;
+import com.teenpatti.platform.transaction.DepositRequest;
 import com.teenpatti.platform.transaction.LedgerEntry;
+import com.teenpatti.platform.transaction.WithdrawalRequest;
 import com.teenpatti.platform.user.FriendRelationship;
 import com.teenpatti.platform.user.User;
 import com.teenpatti.platform.wallet.Wallet;
+import com.teenpatti.platform.wallet.WalletTransaction;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
 import org.springframework.boot.CommandLineRunner;
@@ -21,7 +28,8 @@ import org.springframework.data.mongodb.core.mapping.MongoMappingContext;
 import java.util.List;
 
 /**
- * Mongo DB configuration, collection initialization, and startup health-check ping.
+ * MongoDB configuration: health ping, collection bootstrap, and index enforcement
+ * for all platform domain documents defined in Module 2 (MongoDB Schemas).
  */
 @Slf4j
 @Configuration
@@ -31,21 +39,26 @@ public class MongoConfig {
     public CommandLineRunner mongoInitializer(MongoTemplate mongoTemplate, MongoMappingContext mappingContext) {
         return args -> {
             try {
-                // 1. Health check ping
                 Document pingCommand = new Document("ping", 1);
                 Document result = mongoTemplate.getDb().runCommand(pingCommand);
                 log.info("MongoDB Health Ping SUCCESS: {}", result.toJson());
 
-                // 2. Ensure all 8 domain entity collections and indexes are initialized
                 List<Class<?>> entityClasses = List.of(
                         User.class,
                         Wallet.class,
+                        WalletTransaction.class,
                         LedgerEntry.class,
                         Table.class,
+                        GameSession.class,
+                        GameHistory.class,
                         MatchHistory.class,
-                        FriendRelationship.class,
                         Notification.class,
-                        AdminActionLog.class
+                        AdminLog.class,
+                        AdminActionLog.class,
+                        FriendRelationship.class,
+                        RefreshToken.class,
+                        DepositRequest.class,
+                        WithdrawalRequest.class
                 );
 
                 IndexResolver resolver = new MongoPersistentEntityIndexResolver(mappingContext);
@@ -78,9 +91,9 @@ public class MongoConfig {
                     });
                 }
 
-                log.info("MongoDB Collections & Indexes verification COMPLETED successfully across all 8 domain documents.");
+                log.info("MongoDB collections & indexes verified for {} domain documents.", entityClasses.size());
             } catch (Exception e) {
-                log.warn("MongoDB Startup Initialization Note: {}", e.getMessage());
+                log.warn("MongoDB startup initialization note: {}", e.getMessage());
             }
         };
     }

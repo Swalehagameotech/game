@@ -2,6 +2,7 @@ package com.teenpatti.platform.table;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -20,13 +21,22 @@ import java.util.List;
 public class DefaultTableInitializer {
 
     private final TableRepository tableRepository;
+    @Value("${app.tables.seed-default-public:false}")
+    private boolean seedDefaultPublicTablesEnabled;
 
     @EventListener(ApplicationReadyEvent.class)
     public void seedDefaultPublicTables() {
+        if (!seedDefaultPublicTablesEnabled) {
+            log.info("Default public table seeding is disabled.");
+            return;
+        }
         ensureDefaultPublicTables();
     }
 
     public synchronized void ensureDefaultPublicTables() {
+        if (!seedDefaultPublicTablesEnabled) {
+            return;
+        }
         createDefaultPublicTableIfMissing(StakeTier.LOW, "Low Stakes Room", 1000L);
         createDefaultPublicTableIfMissing(StakeTier.MEDIUM, "Medium Stakes Room", 5000L);
         createDefaultPublicTableIfMissing(StakeTier.HIGH, "High Rollers Room", 25000L);

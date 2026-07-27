@@ -1,15 +1,16 @@
 package com.teenpatti.platform.game.engine;
 
-import com.teenpatti.platform.game.HandSummary;
-import com.teenpatti.platform.game.MatchHistory;
-import com.teenpatti.platform.game.MatchHistoryRepository;
+import com.teenpatti.platform.game.GameSessionService;
+import com.teenpatti.platform.game.betting.BettingLogicService;
+import com.teenpatti.platform.game.winner.WinnerCalculationService;
+import com.teenpatti.platform.game.winner.WinnerSnapshot;
+import com.teenpatti.platform.game.turn.TurnManagementService;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
 import com.teenpatti.platform.table.TableStatus;
-import com.teenpatti.platform.transaction.LedgerEntryType;
-import com.teenpatti.platform.user.User;
 import com.teenpatti.platform.user.UserRepository;
-import com.teenpatti.platform.wallet.WalletService;
+import com.teenpatti.platform.websocket.GameBroadcastService;
+import com.teenpatti.platform.websocket.HandSettlementService;
 import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,13 +18,10 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.*;
 
 /**
- * Server-authoritative central game loop orchestrator managing Teen Patti table lifecycles:
- * 10s start countdowns, boot collection, SecureRandom deck dealing, 20s turn timers with auto-pack,
- * side-shows, show hand evaluations, winner pot settlement, user matchesPlayedCount incrementing,
- * and automatic 5s next round restarts.
+ * Server-authoritative gameplay loop: turn timers, player actions, hand settlement.
+ * Game start (shuffle/deal/boot) is handled by {@link com.teenpatti.platform.game.GameStartService}.
  */
 @Slf4j
 @Service
@@ -32,176 +30,49 @@ public class GameLoopOrchestrator {
 
     private final TableRepository tableRepository;
     private final UserRepository userRepository;
-    private final WalletService walletService;
-    private final MatchHistoryRepository matchHistoryRepository;
+    private final HandContextManager handContextManager;
+    private final HandSettlementService handSettlementService;
+    private final GameSessionService gameSessionService;
+    private final TurnManagementService turnManagementService;
+    private final BettingLogicService bettingLogicService;
+    private final WinnerCalculationService winnerCalculationService;
     private final WebSocketEventPublisher eventPublisher;
+    private final GameBroadcastService gameBroadcastService;
 
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(8);
-    private final ConcurrentHashMap<String, ScheduledFuture<?>> activeTurnTimers = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, ScheduledFuture<?>> activeCountdowns = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, BettingRoundEngine> activeEngines = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Integer> dealerSeats = new ConcurrentHashMap<>();
-
-    private static final int COUNTDOWN_SECONDS = 10;
-    private static final int TURN_TIMEOUT_SECONDS = 20;
-    private static final int NEXT_ROUND_DELAY_SECONDS = 5;
-
+    /**
+     * No auto-start when players join — host must explicitly start the game.
+     */
     public void handlePlayerSeated(String tableId, int currentCount, int minRequired) {
-        Optional<Table> opt = tableRepository.findById(tableId);
-        if (opt.isEmpty()) return;
-        Table table = opt.get();
-
-        if (table.getStatus() == TableStatus.WAITING && currentCount >= minRequired) {
-            if (!activeCountdowns.containsKey(tableId)) {
-                log.info("Minimum required players ({}) reached on table [{}]. Starting {}s countdown.", currentCount, tableId, COUNTDOWN_SECONDS);
-                table.setStatus(TableStatus.COUNTDOWN);
-                table.setUpdatedAt(Instant.now());
-                tableRepository.save(table);
-
-                eventPublisher.publishCountdownStarted(tableId, COUNTDOWN_SECONDS);
-                eventPublisher.publishTableUpdated(tableId, table);
-
-                ScheduledFuture<?> countdownTask = scheduler.schedule(() -> {
-                    activeCountdowns.remove(tableId);
-                    startNewRound(tableId);
-                }, COUNTDOWN_SECONDS, TimeUnit.SECONDS);
-
-                activeCountdowns.put(tableId, countdownTask);
-            }
-        }
+        log.debug("Player seated on table [{}]: {}/{}", tableId, currentCount, minRequired);
     }
 
     public void handlePlayerLeft(String tableId, int remainingCount, int minRequired) {
-        if (remainingCount < minRequired && activeCountdowns.containsKey(tableId)) {
-            ScheduledFuture<?> task = activeCountdowns.remove(tableId);
-            if (task != null) {
-                task.cancel(true);
-            }
-            log.info("Player left table [{}]. Seated count {} below required {}. Countdown cancelled.", tableId, remainingCount, minRequired);
-            
+        if (remainingCount < minRequired) {
             Optional<Table> opt = tableRepository.findById(tableId);
             if (opt.isPresent()) {
-                Table t = opt.get();
-                t.setStatus(TableStatus.WAITING);
-                tableRepository.save(t);
-                eventPublisher.publishTableUpdated(tableId, t);
-            }
-            eventPublisher.publishCountdownCancelled(tableId, "Player left table");
-        }
-    }
-
-    public synchronized void startNewRound(String tableId) {
-        cancelTurnTimer(tableId);
-
-        Optional<Table> opt = tableRepository.findById(tableId);
-        if (opt.isEmpty()) return;
-        Table table = opt.get();
-
-        List<String> seated = table.getSeatedPlayerIds();
-        if (seated == null || seated.size() < 2) {
-            table.setStatus(TableStatus.WAITING);
-            tableRepository.save(table);
-            eventPublisher.publishTableUpdated(tableId, table);
-            return;
-        }
-
-        table.setStatus(TableStatus.DEALING);
-        table.setRoundNumber(table.getRoundNumber() + 1);
-
-        // Rotate dealer seat
-        int currentDealer = dealerSeats.getOrDefault(tableId, 0);
-        int nextDealer = (currentDealer + 1) % seated.size();
-        dealerSeats.put(tableId, nextDealer);
-        table.setDealerSeatIndex(nextDealer);
-
-        // Deduct boot amounts (e.g., 1000 paise = ₹10)
-        long bootPaise = 1000L;
-        long totalPot = 0L;
-        for (String playerId : seated) {
-            try {
-                String refId = "boot:" + tableId + ":" + System.currentTimeMillis() + ":" + playerId;
-                walletService.applyLedgerEntry(playerId, LedgerEntryType.BET, bootPaise, refId);
-                totalPot += bootPaise;
-            } catch (Exception ex) {
-                log.warn("Could not deduct boot amount from user [{}]", playerId, ex);
+                Table table = opt.get();
+                if (table.getStatus() == TableStatus.WAITING || table.getStatus() == TableStatus.ROUND_END) {
+                    table.setStatus(TableStatus.WAITING);
+                    tableRepository.save(table);
+                    eventPublisher.publishTableUpdated(tableId, table);
+                }
             }
         }
-
-        table.setPotPaise(totalPot);
-        table.setActivePlayerIds(new ArrayList<>(seated));
-        table.setBlindPlayerIds(new ArrayList<>(seated));
-        table.setSeenPlayerIds(new ArrayList<>());
-        table.setPackedPlayerIds(new ArrayList<>());
-        table.setWinnerUserId(null);
-
-        // Initialize engine and shuffle deck
-        GameEngineConfig config = GameEngineConfig.defaultConfig(bootPaise, 50000L);
-        BettingRoundEngine engine = new BettingRoundEngine(config);
-        Deck deck = new Deck();
-        deck.shuffle();
-
-        engine.startHand(seated, deck);
-        activeEngines.put(tableId, engine);
-
-        table.setStatus(TableStatus.PLAYING);
-        tableRepository.save(table);
-
-        eventPublisher.publishGameStarted(tableId, Map.of(
-                "tableId", tableId,
-                "seatedPlayers", seated,
-                "bootPaise", bootPaise,
-                "potPaise", totalPot,
-                "dealerSeatIndex", nextDealer
-        ));
-
-        eventPublisher.publishDealerSelected(tableId, nextDealer);
-        eventPublisher.publishPotUpdated(tableId, totalPot);
-        eventPublisher.publishTableUpdated(tableId, table);
-
-        // Notify cards distributed
-        eventPublisher.publishCardsDistributed(tableId, Map.of("message", "Cards dealt privately to all players."));
-
-        // Start turn for seat after dealer
-        int firstTurnIndex = (nextDealer + 1) % seated.size();
-        startTurn(tableId, seated.get(firstTurnIndex), firstTurnIndex);
     }
 
-    private void startTurn(String tableId, String userId, int seatIndex) {
-        cancelTurnTimer(tableId);
-
-        Optional<Table> opt = tableRepository.findById(tableId);
-        if (opt.isPresent()) {
-            Table t = opt.get();
-            t.setCurrentTurnUserId(userId);
-            tableRepository.save(t);
-            eventPublisher.publishTableUpdated(tableId, t);
-        }
-
-        log.info("Turn started for user [{}] at seat [{}] on table [{}]", userId, seatIndex, tableId);
-        eventPublisher.publishTurnStarted(tableId, userId, seatIndex, TURN_TIMEOUT_SECONDS);
-
-        // Schedule 20s turn timeout -> auto-pack
-        ScheduledFuture<?> timerTask = scheduler.schedule(() -> {
-            log.warn("Turn timeout expired for user [{}] on table [{}]. Auto-packing player.", userId, tableId);
-            processAutoPack(tableId, userId);
-        }, TURN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-        activeTurnTimers.put(tableId, timerTask);
+    public void beginTurn(String tableId, String userId, int seatIndex) {
+        startTurn(tableId, userId, seatIndex);
     }
 
-    private void cancelTurnTimer(String tableId) {
-        ScheduledFuture<?> timer = activeTurnTimers.remove(tableId);
-        if (timer != null) {
-            timer.cancel(true);
+    /**
+     * Applies a player action. Returns rejection reason, or null on success.
+     */
+    public synchronized String processAction(String tableId, String userId, String actionType, long betAmount) {
+        Optional<BettingRoundEngine> engineOpt = handContextManager.getEngine(tableId);
+        if (engineOpt.isEmpty()) {
+            return "No active hand currently in progress";
         }
-    }
-
-    public synchronized void processAction(String tableId, String userId, String actionType, long betAmount) {
-        BettingRoundEngine engine = activeEngines.get(tableId);
-        if (engine == null) {
-            log.warn("No active game engine for table [{}]", tableId);
-            return;
-        }
+        BettingRoundEngine engine = engineOpt.get();
 
         cancelTurnTimer(tableId);
 
@@ -211,60 +82,58 @@ public class GameLoopOrchestrator {
 
             if ("SEE_CARDS".equalsIgnoreCase(actionType)) {
                 engine.applyAction(PlayerAction.of(userId, PlayerActionType.SEE_CARDS));
-                if (table != null) {
-                    table.getBlindPlayerIds().remove(userId);
-                    if (!table.getSeenPlayerIds().contains(userId)) table.getSeenPlayerIds().add(userId);
-                    table.setLastAction(userId + " saw cards");
-                    tableRepository.save(table);
-                    eventPublisher.publishTableUpdated(tableId, table);
-                }
+                updateTableAfterSee(tableId, table, userId, engine);
+                turnManagementService.syncTableFromEngine(table, engine);
                 eventPublisher.publishSeenPlayed(tableId, userId);
-                return;
-            } else if ("CHAAL".equalsIgnoreCase(actionType) || "PLAY_BLIND".equalsIgnoreCase(actionType)) {
-                long required = engine.getRequiredBetPaise(userId);
-                long bet = Math.max(betAmount, required);
-                String refId = "bet:" + tableId + ":" + System.currentTimeMillis() + ":" + userId;
-                walletService.applyLedgerEntry(userId, LedgerEntryType.BET, bet, refId);
-
-                engine.applyAction(PlayerAction.of(userId, PlayerActionType.CHAAL, bet));
+                eventPublisher.publishPlayerAction(tableId, userId, actionType, 0L, engine.getPotPaise());
+                syncSession(table, engine);
                 if (table != null) {
-                    table.setPotPaise(engine.getPotPaise());
-                    table.setLastAction(userId + " played Chaal ₹" + (bet / 100));
-                    tableRepository.save(table);
-                    eventPublisher.publishTableUpdated(tableId, table);
+                    bettingLogicService.publishBettingState(table, engine, userId);
                 }
+                gameBroadcastService.broadcastTableState(tableId);
+                return null;
+            }
+
+            String handId = table != null ? table.getCurrentHandId() : null;
+
+            if ("CHAAL".equalsIgnoreCase(actionType) || "PLAY_BLIND".equalsIgnoreCase(actionType)
+                    || "CALL".equalsIgnoreCase(actionType)) {
+                long bet = bettingLogicService.resolveBetAmount(actionType, engine, userId, betAmount);
+                bettingLogicService.debitBet(tableId, handId, userId, bet);
+                PlayerActionType type = "PLAY_BLIND".equalsIgnoreCase(actionType)
+                        ? PlayerActionType.PLAY_BLIND
+                        : PlayerActionType.CHAAL;
+                engine.applyAction(PlayerAction.of(userId, type, bet));
+                updateTablePot(table, engine, userId + " played Chaal");
+                turnManagementService.syncTableFromEngine(table, engine);
                 eventPublisher.publishBlindPlayed(tableId, userId, bet, engine.getPotPaise());
+                eventPublisher.publishPlayerAction(tableId, userId, actionType, bet, engine.getPotPaise());
             } else if ("RAISE".equalsIgnoreCase(actionType)) {
-                long bet = betAmount > 0 ? betAmount : (engine.getRequiredBetPaise(userId) * 2);
-                String refId = "bet:" + tableId + ":" + System.currentTimeMillis() + ":" + userId;
-                walletService.applyLedgerEntry(userId, LedgerEntryType.BET, bet, refId);
-
+                long bet = bettingLogicService.resolveBetAmount(actionType, engine, userId, betAmount);
+                bettingLogicService.debitBet(tableId, handId, userId, bet);
                 engine.applyAction(PlayerAction.of(userId, PlayerActionType.RAISE, bet));
-                if (table != null) {
-                    table.setPotPaise(engine.getPotPaise());
-                    table.setLastAction(userId + " raised ₹" + (bet / 100));
-                    tableRepository.save(table);
-                    eventPublisher.publishTableUpdated(tableId, table);
-                }
+                updateTablePot(table, engine, userId + " raised");
+                turnManagementService.syncTableFromEngine(table, engine);
                 eventPublisher.publishRaisePlayed(tableId, userId, bet, engine.getPotPaise());
+                eventPublisher.publishPlayerAction(tableId, userId, actionType, bet, engine.getPotPaise());
             } else if ("PACK".equalsIgnoreCase(actionType)) {
                 engine.applyAction(PlayerAction.of(userId, PlayerActionType.PACK));
-                if (table != null) {
-                    table.getActivePlayerIds().remove(userId);
-                    if (!table.getPackedPlayerIds().contains(userId)) table.getPackedPlayerIds().add(userId);
-                    table.setLastAction(userId + " packed");
-                    tableRepository.save(table);
-                    eventPublisher.publishTableUpdated(tableId, table);
-                }
+                updateTableAfterPack(table, userId, engine);
+                turnManagementService.syncTableFromEngine(table, engine);
                 eventPublisher.publishPackPlayed(tableId, userId, false);
+                eventPublisher.publishPlayerAction(tableId, userId, actionType, 0L, engine.getPotPaise());
             } else if ("SIDE_SHOW_REQUEST".equalsIgnoreCase(actionType)) {
                 eventPublisher.publishSideShowRequested(tableId, userId, "target");
-                return;
+                cancelTurnTimer(tableId);
+                String nextUser = engine.getCurrentTurnPlayerId();
+                if (table != null && nextUser != null) {
+                    int nextSeat = table.getSeatedPlayerIds().indexOf(nextUser);
+                    startTurn(tableId, nextUser, nextSeat);
+                }
+                return null;
             } else if ("SHOW".equalsIgnoreCase(actionType)) {
-                long required = engine.getRequiredBetPaise(userId);
-                String refId = "bet:" + tableId + ":" + System.currentTimeMillis() + ":" + userId;
-                walletService.applyLedgerEntry(userId, LedgerEntryType.BET, required, refId);
-
+                long required = bettingLogicService.resolveBetAmount(actionType, engine, userId, betAmount);
+                bettingLogicService.debitBet(tableId, handId, userId, required);
                 engine.applyAction(PlayerAction.of(userId, PlayerActionType.SHOW, required));
                 if (table != null) {
                     table.setStatus(TableStatus.SHOW);
@@ -273,46 +142,66 @@ public class GameLoopOrchestrator {
                     eventPublisher.publishTableUpdated(tableId, table);
                 }
                 eventPublisher.publishShowRequested(tableId, Map.of("requesterId", userId));
+                eventPublisher.publishPlayerAction(tableId, userId, actionType, required, engine.getPotPaise());
+            } else {
+                return "Unsupported action: " + actionType;
             }
 
             eventPublisher.publishPotUpdated(tableId, engine.getPotPaise());
+            syncSession(table, engine);
+            if (table != null) {
+                bettingLogicService.publishBettingStateForTable(table, engine);
+            }
 
             if (engine.isHandFinished()) {
                 handleHandFinished(tableId, engine);
             } else {
+                gameBroadcastService.broadcastTableState(tableId);
                 String nextUser = engine.getCurrentTurnPlayerId();
                 if (table != null && nextUser != null) {
                     int nextSeat = table.getSeatedPlayerIds().indexOf(nextUser);
                     startTurn(tableId, nextUser, nextSeat);
                 }
             }
+            return null;
+        } catch (InvalidActionException ex) {
+            log.warn("Action [{}] rejected for user [{}] on table [{}]: {}", actionType, userId, tableId, ex.getMessage());
+            String nextUser = engine.getCurrentTurnPlayerId();
+            Optional<Table> optTable = tableRepository.findById(tableId);
+            if (optTable.isPresent() && nextUser != null) {
+                int nextSeat = optTable.get().getSeatedPlayerIds().indexOf(nextUser);
+                startTurn(tableId, nextUser, nextSeat);
+            }
+            return ex.getMessage() != null ? ex.getMessage() : "Invalid action";
         } catch (Exception e) {
             log.error("Error applying action [{}] for user [{}] on table [{}]: {}", actionType, userId, tableId, e.getMessage());
+            return e.getMessage();
         }
     }
 
     public synchronized void processAutoPack(String tableId, String userId) {
-        BettingRoundEngine engine = activeEngines.get(tableId);
-        if (engine == null || engine.isHandFinished()) return;
+        Optional<BettingRoundEngine> engineOpt = handContextManager.getEngine(tableId);
+        if (engineOpt.isEmpty()) {
+            return;
+        }
+        BettingRoundEngine engine = engineOpt.get();
+        if (engine.isHandFinished()) {
+            return;
+        }
 
         try {
             engine.applyAction(PlayerAction.of(userId, PlayerActionType.PACK));
-
             Optional<Table> optTable = tableRepository.findById(tableId);
             if (optTable.isPresent()) {
-                Table table = optTable.get();
-                table.getActivePlayerIds().remove(userId);
-                if (!table.getPackedPlayerIds().contains(userId)) table.getPackedPlayerIds().add(userId);
-                table.setLastAction(userId + " auto-packed (timeout)");
-                tableRepository.save(table);
-                eventPublisher.publishTableUpdated(tableId, table);
+                updateTableAfterPack(optTable.get(), userId, engine);
+                turnManagementService.syncTableFromEngine(optTable.get(), engine);
             }
-
             eventPublisher.publishPackPlayed(tableId, userId, true);
 
             if (engine.isHandFinished()) {
                 handleHandFinished(tableId, engine);
             } else {
+                gameBroadcastService.broadcastTableState(tableId);
                 String nextUser = engine.getCurrentTurnPlayerId();
                 if (optTable.isPresent() && nextUser != null) {
                     int nextSeat = optTable.get().getSeatedPlayerIds().indexOf(nextUser);
@@ -324,77 +213,110 @@ public class GameLoopOrchestrator {
         }
     }
 
+    private void startTurn(String tableId, String userId, int seatIndex) {
+        turnManagementService.beginTurn(tableId, userId, seatIndex,
+                () -> processAutoPack(tableId, userId));
+    }
+
+    private void cancelTurnTimer(String tableId) {
+        turnManagementService.cancelTurn(tableId);
+    }
+
+    private void syncSession(Table table, BettingRoundEngine engine) {
+        if (table == null || table.getCurrentHandId() == null) {
+            return;
+        }
+        Instant deadline = turnManagementService.getTurnDeadline(table.getId()).orElse(null);
+        gameSessionService.syncActiveSession(table.getCurrentHandId(), engine, table, deadline);
+    }
+
+    private void updateTablePot(Table table, BettingRoundEngine engine, String lastAction) {
+        if (table == null) {
+            return;
+        }
+        table.setPotPaise(engine.getPotPaise());
+        table.setLastAction(lastAction);
+        tableRepository.save(table);
+        eventPublisher.publishTableUpdated(table.getId(), table);
+    }
+
+    private void updateTableAfterSee(String tableId, Table table, String userId, BettingRoundEngine engine) {
+        if (table == null) {
+            return;
+        }
+        table.getBlindPlayerIds().remove(userId);
+        if (!table.getSeenPlayerIds().contains(userId)) {
+            table.getSeenPlayerIds().add(userId);
+        }
+        table.setLastAction(userId + " saw cards");
+        tableRepository.save(table);
+        eventPublisher.publishTableUpdated(tableId, table);
+    }
+
+    private void updateTableAfterPack(Table table, String userId, BettingRoundEngine engine) {
+        if (table == null) {
+            return;
+        }
+        table.getActivePlayerIds().remove(userId);
+        if (!table.getPackedPlayerIds().contains(userId)) {
+            table.getPackedPlayerIds().add(userId);
+        }
+        table.setPotPaise(engine.getPotPaise());
+        table.setLastAction(userId + " packed");
+        tableRepository.save(table);
+        eventPublisher.publishTableUpdated(table.getId(), table);
+    }
+
     private void handleHandFinished(String tableId, BettingRoundEngine engine) {
         cancelTurnTimer(tableId);
+        turnManagementService.endTurn(tableId);
         HandOutcome outcome = engine.getOutcome();
-        if (outcome == null) return;
+        if (outcome == null) {
+            return;
+        }
 
         String winnerId = outcome.getWinnerId();
-        long payoutPaise = outcome.getWinnerPayoutPaise();
+        log.info("Hand finished on table [{}]. Winner [{}]", tableId, winnerId);
 
-        log.info("Hand finished on table [{}]. Winner [{}] wins payout {} paise", tableId, winnerId, payoutPaise);
-
-        // Save Table state
         Optional<Table> optTable = tableRepository.findById(tableId);
-        if (optTable.isPresent()) {
-            Table table = optTable.get();
-            table.setStatus(TableStatus.ROUND_END);
-            table.setWinnerUserId(winnerId);
-            table.setLastAction("Winner: " + winnerId);
-            tableRepository.save(table);
-            eventPublisher.publishTableUpdated(tableId, table);
+        if (optTable.isEmpty()) {
+            handContextManager.clearHand(tableId);
+            return;
         }
 
-        // Credit pot to winner wallet
-        try {
-            String refId = "win:" + tableId + ":" + System.currentTimeMillis() + ":" + winnerId;
-            walletService.applyLedgerEntry(winnerId, LedgerEntryType.WIN, payoutPaise, refId);
-        } catch (Exception ex) {
-            log.error("Error crediting winnings to winner [{}]", winnerId, ex);
+        Table table = optTable.get();
+        String handId = table.getCurrentHandId() != null ? table.getCurrentHandId() : UUID.randomUUID().toString();
+        Instant startedAt = handContextManager.getHandStartTime(tableId);
+
+        table.setStatus(TableStatus.ROUND_END);
+        table.setWinnerUserId(winnerId);
+        table.setPotPaise(0);
+        table.setLastAction("Winner: " + winnerId);
+        tableRepository.save(table);
+
+        handSettlementService.settleCompletedHand(table, handId, outcome, startedAt);
+        gameSessionService.completeSession(handId, outcome);
+
+        for (String pid : table.getSeatedPlayerIds()) {
+            userRepository.findById(pid).ifPresent(u -> {
+                u.setMatchesPlayedCount(u.getMatchesPlayedCount() + 1);
+                userRepository.save(u);
+            });
         }
 
-        // Increment matchesPlayedCount for seated players
-        if (optTable.isPresent()) {
-            for (String pid : optTable.get().getSeatedPlayerIds()) {
-                userRepository.findById(pid).ifPresent(u -> {
-                    u.setMatchesPlayedCount(u.getMatchesPlayedCount() + 1);
-                    userRepository.save(u);
-                });
-            }
-        }
+        WinnerSnapshot winnerSnapshot = winnerCalculationService.buildWinnerSnapshot(
+                table, handId, outcome, engine, table.getGameVariant());
+        winnerCalculationService.publishWinnerDeclared(tableId, winnerSnapshot);
 
-        // Save MatchHistory audit document
-        try {
-            MatchHistory history = MatchHistory.builder()
-                    .tableId(tableId)
-                    .winnerId(winnerId)
-                    .potAmountPaise(outcome.getPotAmountPaise())
-                    .rakeAmountPaise(outcome.getRakeAmountPaise())
-                    .handSummary(HandSummary.builder()
-                            .winningHandName(outcome.getWinningCategory() != null ? outcome.getWinningCategory().name() : "FOLD_WIN")
-                            .notes(outcome.getNotes() != null ? outcome.getNotes() : "Hand completed")
-                            .build())
-                    .startedAt(Instant.now())
-                    .endedAt(Instant.now())
-                    .build();
-            matchHistoryRepository.save(history);
-        } catch (Exception ex) {
-            log.warn("Could not save MatchHistory for table [{}]", tableId, ex);
-        }
+        eventPublisher.publishRoundFinished(tableId, 0);
+        eventPublisher.publishTableUpdated(tableId, table);
 
-        eventPublisher.publishWinnerDeclared(tableId, Map.of(
-                "winnerUserId", winnerId,
-                "potPaise", outcome.getPotAmountPaise(),
-                "payoutPaise", payoutPaise,
-                "winningCategory", outcome.getWinningCategory() != null ? outcome.getWinningCategory().name() : "FOLD_WIN",
-                "notes", outcome.getNotes() != null ? outcome.getNotes() : "Hand completed"
-        ));
+        // Broadcast while engine still holds outcome/cards, then clear in-memory hand
+        gameBroadcastService.broadcastTableState(tableId);
+        handContextManager.clearHand(tableId);
 
-        eventPublisher.publishRoundFinished(tableId, NEXT_ROUND_DELAY_SECONDS);
-
-        // Schedule next round auto-start after 5 seconds
-        scheduler.schedule(() -> {
-            startNewRound(tableId);
-        }, NEXT_ROUND_DELAY_SECONDS, TimeUnit.SECONDS);
+        table.setCurrentTurnUserId(null);
+        tableRepository.save(table);
+        gameBroadcastService.broadcastTableState(tableId);
     }
 }

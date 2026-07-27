@@ -6,7 +6,6 @@ import com.teenpatti.platform.lobby.dto.CreatePrivateTableRequest;
 import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
 import com.teenpatti.platform.table.dto.JoinTableResponse;
 import com.teenpatti.platform.table.dto.QuickPlayRequest;
-import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Controller providing Quick Play single-click matchmaking.
+ * Quick Play: join an open public table or auto-create one at the requested boot amount.
  */
 @Slf4j
 @RestController
@@ -28,10 +27,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class QuickPlayController {
 
-    private final TableRepository tableRepository;
     private final TableService tableService;
     private final LobbyService lobbyService;
-    private final WebSocketEventPublisher webSocketEventPublisher;
+    private final PublicTableService publicTableService;
 
     @PostMapping("/quick-play")
     public ResponseEntity<ApiResponse<JoinTableResponse>> quickPlay(
@@ -41,40 +39,40 @@ public class QuickPlayController {
         String userId = authentication.getPrincipal().toString();
         long targetBootPaise = request.getBootAmountPaise() != null ? request.getBootAmountPaise() : 1000L;
 
-        log.info("Quick Play request received for user [{}] for boot amount {} paise", userId, targetBootPaise);
+        log.info("Quick Play request for user [{}] boot {} paise", userId, targetBootPaise);
 
-        // 1. Search for existing active public table with matching boot amount and open seats
-        List<Table> availableTables = tableRepository.findAll().stream()
-                .filter(t -> t.getTableType() == TableType.PUBLIC)
-                .filter(t -> t.getStatus() == TableStatus.WAITING)
-                .filter(t -> t.getBootAmountPaise() == targetBootPaise)
-                .filter(t -> t.getSeatedPlayerIds() == null || t.getSeatedPlayerIds().size() < t.getMaxPlayers())
-                .filter(t -> t.getSeatedPlayerIds() == null || !t.getSeatedPlayerIds().contains(userId))
-                .toList();
-
-        if (!availableTables.isEmpty()) {
-            Table targetTable = availableTables.get(0);
-            log.info("Found matching active table [{}] for Quick Play. Joining user [{}]...", targetTable.getId(), userId);
+        List<Table> candidates = publicTableService.findQuickPlayCandidates(targetBootPaise, userId);
+        if (!candidates.isEmpty()) {
+            Table targetTable = candidates.get(0);
+            log.info("Quick Play joining existing public table [{}] for user [{}]", targetTable.getId(), userId);
             JoinTableResponse joinResponse = tableService.joinTable(userId, targetTable.getId());
             return ResponseEntity.ok(ApiResponse.success("Quick Play successfully joined table", joinResponse));
         }
 
-        // 2. No matching table found: Automatically create a new public table and join creator
-        log.info("No matching active table found for boot amount {} paise. Auto-creating public table for user [{}]...", targetBootPaise, userId);
+        log.info("Quick Play creating new public table for user [{}] boot {} paise", userId, targetBootPaise);
 
-        StakeTier tier = targetBootPaise <= 1000L ? StakeTier.LOW : targetBootPaise <= 5000L ? StakeTier.MEDIUM : StakeTier.HIGH;
+        StakeTier tier = targetBootPaise <= 1000L ? StakeTier.LOW
+                : targetBootPaise <= 5000L ? StakeTier.MEDIUM
+                : StakeTier.HIGH;
 
         CreatePrivateTableRequest createReq = CreatePrivateTableRequest.builder()
                 .tableName("Teen Patti Quick Play ₹" + (targetBootPaise / 100))
                 .stakeTier(tier)
                 .bootAmount(targetBootPaise)
-                .gameVariant("HIGHER")
+                .gameVariant("CLASSIC")
+                .minPlayers(3)
                 .maxPlayers(6)
                 .build();
 
         TableSummaryResponse summary = lobbyService.createPublicTable(userId, createReq);
 
-        JoinTableResponse joinResponse = tableService.joinTable(userId, summary.getTableId());
-        return ResponseEntity.ok(ApiResponse.success("Quick Play table auto-created and joined", joinResponse));
+        JoinTableResponse joinResponse = JoinTableResponse.builder()
+                .tableId(summary.getTableId())
+                .seatIndex(0)
+                .heldBuyInPaise(summary.getBootAmount())
+                .tableDetail(tableService.getTableDetails(userId, summary.getTableId()))
+                .build();
+
+        return ResponseEntity.ok(ApiResponse.success("Quick Play table auto-created", joinResponse));
     }
 }

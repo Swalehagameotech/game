@@ -26,18 +26,21 @@ public class WithdrawalService {
     private final WalletService walletService;
     private final long minWithdrawalAmountPaise;
     private final long maxWithdrawalAmountPaise;
+    private final boolean requireKyc;
 
     public WithdrawalService(
             WithdrawalRequestRepository withdrawalRequestRepository,
             UserRepository userRepository,
             WalletService walletService,
             @Value("${app.withdrawal.min-amount-paise:50000}") long minWithdrawalAmountPaise,
-            @Value("${app.withdrawal.max-amount-paise:10000000}") long maxWithdrawalAmountPaise) {
+            @Value("${app.withdrawal.max-amount-paise:10000000}") long maxWithdrawalAmountPaise,
+            @Value("${app.withdrawal.require-kyc:false}") boolean requireKyc) {
         this.withdrawalRequestRepository = withdrawalRequestRepository;
         this.userRepository = userRepository;
         this.walletService = walletService;
         this.minWithdrawalAmountPaise = minWithdrawalAmountPaise;
         this.maxWithdrawalAmountPaise = maxWithdrawalAmountPaise;
+        this.requireKyc = requireKyc;
     }
 
     public WithdrawalResponse requestWithdrawal(String userId, InitiateWithdrawalRequest request) {
@@ -45,7 +48,7 @@ public class WithdrawalService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
 
-        if (user.getKycStatus() != KycStatus.VERIFIED) {
+        if (requireKyc && user.getKycStatus() != KycStatus.VERIFIED) {
             log.warn("Withdrawal request rejected for user [{}]: KYC status is [{}]", userId, user.getKycStatus());
             throw new KycNotVerifiedException("KYC verification is required before initiating withdrawals. Current status: " + user.getKycStatus());
         }
