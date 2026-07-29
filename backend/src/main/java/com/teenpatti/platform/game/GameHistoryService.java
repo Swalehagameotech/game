@@ -58,6 +58,9 @@ public class GameHistoryService {
         Instant endedAt = Instant.now();
         HandSummary handSummary = buildHandSummary(outcome);
         WinningCategory winningCategory = mapWinningCategory(outcome.getWinningCategory());
+        Instant effectiveStart = startedAt != null ? startedAt : endedAt;
+        long durationSeconds = Math.max(0, endedAt.getEpochSecond() - effectiveStart.getEpochSecond());
+        long bootPaise = table.getBootAmountPaise() > 0 ? table.getBootAmountPaise() : table.getCurrentStakePaise();
 
         GameHistory history = GameHistory.builder()
                 .tableId(tableId)
@@ -69,9 +72,11 @@ public class GameHistoryService {
                 .potAmountPaise(outcome.getPotAmountPaise())
                 .rakeAmountPaise(outcome.getRakeAmountPaise())
                 .winnerPayoutPaise(outcome.getWinnerPayoutPaise())
+                .bootAmountPaise(bootPaise)
+                .durationSeconds(durationSeconds)
                 .winningCategory(winningCategory)
                 .handSummary(handSummary)
-                .startedAt(startedAt != null ? startedAt : endedAt)
+                .startedAt(effectiveStart)
                 .endedAt(endedAt)
                 .build();
 

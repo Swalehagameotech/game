@@ -2,6 +2,7 @@ package com.teenpatti.platform.admin;
 
 import com.teenpatti.platform.admin.dto.AdminAnnouncementRequest;
 import com.teenpatti.platform.admin.dto.AdminDashboardResponse;
+import com.teenpatti.platform.admin.dto.AdminUserDetailDto;
 import com.teenpatti.platform.admin.dto.AdminUserSummaryDto;
 import com.teenpatti.platform.common.response.ApiResponse;
 import com.teenpatti.platform.transaction.LedgerEntry;
@@ -50,6 +51,11 @@ public class AdminPanelController {
     @GetMapping("/users/{userId}")
     public ResponseEntity<ApiResponse<AdminUserSummaryDto>> getUserProfile(@PathVariable String userId) {
         return ResponseEntity.ok(ApiResponse.success(adminPanelService.getUserProfile(userId)));
+    }
+
+    @GetMapping("/users/{userId}/details")
+    public ResponseEntity<ApiResponse<AdminUserDetailDto>> getUserDetails(@PathVariable String userId) {
+        return ResponseEntity.ok(ApiResponse.success(adminPanelService.getUserDetails(userId)));
     }
 
     @GetMapping("/users/{userId}/wallet/history")

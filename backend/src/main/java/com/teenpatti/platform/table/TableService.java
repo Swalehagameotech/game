@@ -39,10 +39,15 @@ public class TableService {
     private final StakeTierConfig stakeTierConfig;
     private final com.teenpatti.platform.websocket.WebSocketEventPublisher webSocketEventPublisher;
     private final com.teenpatti.platform.game.GameEngineService gameEngineService;
+    private final com.teenpatti.platform.game.engine.HandContextManager handContextManager;
+    private final com.teenpatti.platform.game.betting.BettingLogicService bettingLogicService;
+    private final com.teenpatti.platform.websocket.GameStateProjector gameStateProjector;
     private final PublicTableCountdownService publicTableCountdownService;
     private final TableCountdownRegistry countdownRegistry;
     private final PublicTableService publicTableService;
     private final PrivateTableService privateTableService;
+    private final HostManagementService hostManagementService;
+    private final com.teenpatti.platform.websocket.GameBroadcastService gameBroadcastService;
 
     public List<Table> getTablesByStatus(TableStatus status) {
         return tableRepository.findByStatus(status);
@@ -149,9 +154,28 @@ public class TableService {
         }
 
         TableStatus currentStatus = initialTable.getStatus();
+        boolean wasHost = userId.equals(initialTable.getHostId());
+
+        if (isActiveHandStatus(currentStatus)) {
+            gameEngineService.handlePlayerLeftMidHand(tableId, userId);
+        }
         executeAtomicLeave(userId, tableId);
-        int updatedCount = Math.max(0, initialTable.getSeatedPlayerIds().size() - 1);
+
+        Table refreshed = tableRepository.findById(tableId).orElse(null);
+        int updatedCount = refreshed != null && refreshed.getSeatedPlayerIds() != null
+                ? refreshed.getSeatedPlayerIds().size() : 0;
+
         webSocketEventPublisher.publishPlayerLeft(tableId, userId, updatedCount);
+
+        if (refreshed != null) {
+            // Host transfer only between hands — during RUNNING host privileges are irrelevant.
+            if (wasHost && !isActiveHandStatus(currentStatus)) {
+                hostManagementService.transferHostAfterDeparture(tableId, userId);
+            }
+
+            webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(
+                    tableRepository.findById(tableId).orElse(refreshed)));
+        }
 
         int minReq = initialTable.getMinPlayers() > 0 ? initialTable.getMinPlayers() : 3;
         gameEngineService.handlePlayerLeft(tableId, updatedCount, minReq);
@@ -192,6 +216,79 @@ public class TableService {
         }
 
         return buildTableDetailResponse(table);
+    }
+
+    /**
+     * Personalized live hand projection (same shape as WS STATE_UPDATE) for refresh/reconnect.
+     */
+    public com.teenpatti.platform.websocket.dto.PlayerViewGameState getLivePlayerView(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+
+        if (table.getSeatedPlayerIds() == null || !table.getSeatedPlayerIds().contains(userId)) {
+            throw new PlayerNotSeatedException("Player is not seated at table: " + tableId);
+        }
+
+        com.teenpatti.platform.game.engine.BettingRoundEngine engine =
+                gameEngineService.ensureActiveEngine(tableId).orElse(null);
+        return gameStateProjector.createProjection(table, engine, userId);
+    }
+
+    /**
+     * Dedicated server-authoritative betting payload for current player.
+     */
+    public com.teenpatti.platform.game.betting.BettingState getBettingState(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+
+        if (table.getSeatedPlayerIds() == null || !table.getSeatedPlayerIds().contains(userId)) {
+            throw new PlayerNotSeatedException("Player is not seated at table: " + tableId);
+        }
+
+        com.teenpatti.platform.game.engine.BettingRoundEngine engine = gameEngineService.ensureActiveEngine(tableId)
+                .orElseThrow(() -> new IllegalStateException("No active hand currently in progress"));
+        return bettingLogicService.buildBettingState(table, engine, userId);
+    }
+
+    /**
+     * Blind → Seen for the authenticated seated player. Returns only their three cards.
+     */
+    public com.teenpatti.platform.game.dto.SeeCardsResponse seeCards(String userId, String tableId) {
+        return gameEngineService.seeCards(userId, tableId);
+    }
+
+    /**
+     * REST fallback for Blind / Chaal / Raise / Pack / Show / Side Show.
+     * Returns updated betting state for the acting player.
+     */
+    public com.teenpatti.platform.game.betting.BettingState processPlayerAction(
+            String userId, String tableId, String actionType, long amountPaise) {
+        Table table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+        if (table.getSeatedPlayerIds() == null || !table.getSeatedPlayerIds().contains(userId)) {
+            throw new PlayerNotSeatedException("Player is not seated at table: " + tableId);
+        }
+
+        String rejection = gameEngineService.processAction(tableId, userId, actionType, amountPaise);
+        if (rejection != null) {
+            throw new IllegalStateException(rejection);
+        }
+
+        com.teenpatti.platform.game.engine.BettingRoundEngine engine = handContextManager.getEngine(tableId)
+                .orElseGet(() -> gameEngineService.ensureActiveEngine(tableId).orElse(null));
+        if (engine == null) {
+            // Hand may have finished after SHOW/PACK — return last known empty actions.
+            return com.teenpatti.platform.game.betting.BettingState.builder()
+                    .tableId(tableId)
+                    .userId(userId)
+                    .playerState("PACKED")
+                    .potPaise(0)
+                    .myTurn(false)
+                    .allowedActions(java.util.List.of())
+                    .build();
+        }
+        Table refreshed = tableRepository.findById(tableId).orElse(table);
+        return bettingLogicService.buildBettingState(refreshed, engine, userId);
     }
 
     /**
@@ -359,6 +456,9 @@ public class TableService {
                 }
 
                 TableSeatHelper.removeSeat(table, userId);
+                if (table.getDisconnectedPlayerIds() != null) {
+                    table.getDisconnectedPlayerIds().remove(userId);
+                }
                 if (isActiveHandStatus(table.getStatus())) {
                     if (!table.getLeftMidHandPlayerIds().contains(userId)) {
                         table.getLeftMidHandPlayerIds().add(userId);
@@ -430,7 +530,90 @@ public class TableService {
                 .inviteCode(table.getInviteCode())
                 .seatedPlayers(seatedPlayers)
                 .leftMidHandPlayerIds(table.getLeftMidHandPlayerIds() != null ? table.getLeftMidHandPlayerIds() : List.of())
+                .disconnectedPlayerIds(table.getDisconnectedPlayerIds() != null ? table.getDisconnectedPlayerIds() : List.of())
                 .build();
+    }
+
+    /**
+     * Marks a seated player as disconnected (grace period). Does not remove the seat.
+     */
+    public void markPlayerDisconnected(String userId, String tableId, int graceSeconds) {
+        int attempts = 0;
+        while (attempts++ < MAX_OPTIMISTIC_LOCK_RETRIES) {
+            try {
+                Table table = tableRepository.findById(tableId)
+                        .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
+                if (!table.getSeatedPlayerIds().contains(userId)) {
+                    return;
+                }
+                if (table.getDisconnectedPlayerIds() == null) {
+                    table.setDisconnectedPlayerIds(new ArrayList<>());
+                }
+                if (!table.getDisconnectedPlayerIds().contains(userId)) {
+                    table.getDisconnectedPlayerIds().add(userId);
+                    tableRepository.save(table);
+                }
+                webSocketEventPublisher.publishPlayerDisconnected(tableId, userId, graceSeconds);
+                webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(table));
+                gameBroadcastService.broadcastTableState(tableId);
+                return;
+            } catch (OptimisticLockingFailureException ex) {
+                backoffDelay();
+            }
+        }
+    }
+
+    /**
+     * Clears disconnected flag after successful reconnect.
+     */
+    public void clearPlayerDisconnected(String userId, String tableId) {
+        int attempts = 0;
+        while (attempts++ < MAX_OPTIMISTIC_LOCK_RETRIES) {
+            try {
+                Optional<Table> opt = tableRepository.findById(tableId);
+                if (opt.isEmpty()) {
+                    return;
+                }
+                Table table = opt.get();
+                if (clearDisconnectedInternal(table, userId)) {
+                    tableRepository.save(table);
+                    webSocketEventPublisher.publishPlayerReconnected(tableId, userId);
+                    webSocketEventPublisher.publishTableUpdated(tableId, buildTableDetailResponse(table));
+                    gameBroadcastService.broadcastTableState(tableId);
+                }
+                return;
+            } catch (OptimisticLockingFailureException ex) {
+                backoffDelay();
+            }
+        }
+    }
+
+    /**
+     * Grace period expired: pack during active hand, leave + host transfer between hands.
+     */
+    public void handleDisconnectGraceExpired(String userId, String tableId) {
+        Table table = tableRepository.findById(tableId).orElse(null);
+        if (table == null || !table.getSeatedPlayerIds().contains(userId)) {
+            return;
+        }
+        clearPlayerDisconnected(userId, tableId);
+
+        if (isActiveHandStatus(table.getStatus())) {
+            log.info("Grace expired for [{}] on table [{}] during hand — auto-packing", userId, tableId);
+            gameEngineService.handlePlayerLeftMidHand(tableId, userId);
+            gameBroadcastService.broadcastTableState(tableId);
+            return;
+        }
+
+        log.info("Grace expired for [{}] on table [{}] between hands — removing from table", userId, tableId);
+        leaveTable(userId, tableId);
+    }
+
+    private boolean clearDisconnectedInternal(Table table, String userId) {
+        if (table.getDisconnectedPlayerIds() == null) {
+            return false;
+        }
+        return table.getDisconnectedPlayerIds().remove(userId);
     }
 
     private long resolveBootPaise(Table table) {

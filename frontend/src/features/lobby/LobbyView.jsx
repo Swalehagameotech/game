@@ -38,11 +38,13 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   const [quickPlayLoading, setQuickPlayLoading] = useState(null);
   const [selectedStake, setSelectedStake] = useState('ALL');
   const [error, setError] = useState('');
+  const [bootOptionsPaise, setBootOptionsPaise] = useState([1000]);
 
   // Private/Public Table Creation Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createTableType, setCreateTableType] = useState('PUBLIC');
   const [createStakeTier, setCreateStakeTier] = useState('LOW');
+  const [createBootAmountPaise, setCreateBootAmountPaise] = useState(1000);
   const [createMaxPlayers, setCreateMaxPlayers] = useState(3);
   const [createMinPlayers, setCreateMinPlayers] = useState(3);
   const [createTableName, setCreateTableName] = useState('');
@@ -76,6 +78,23 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
     }
   };
 
+  const fetchBootOptions = async () => {
+    try {
+      const { data: res } = await axiosClient.get('/lobby/boot-options');
+      const data = res?.data || res;
+      const options = Array.isArray(data?.bootAmountOptionsPaise) && data.bootAmountOptionsPaise.length
+        ? data.bootAmountOptionsPaise
+        : [1000];
+      setBootOptionsPaise(options);
+      setCreateBootAmountPaise(options[0]);
+      setCreateMinPlayers(data?.minimumPlayers ?? 3);
+      setCreateMaxPlayers(data?.maximumPlayers ?? 6);
+    } catch {
+      setBootOptionsPaise([1000]);
+      setCreateBootAmountPaise(1000);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) {
       setDashboardData(null);
@@ -83,6 +102,7 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
     }
 
     fetchHomeDashboard();
+    fetchBootOptions();
 
     const onRealtime = (e) => {
       const event = e.detail;
@@ -185,6 +205,7 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
       const { data: res } = await axiosClient.post(endpoint, {
         tableName: createTableName || undefined,
         stakeTier: createStakeTier,
+        bootAmount: createBootAmountPaise,
         maxPlayers: createMaxPlayers,
         minPlayers: createMinPlayers,
       });
@@ -227,8 +248,8 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   // 5. Join Private Table with Code Handler
   const handleJoinPrivateSubmit = async (e) => {
     e.preventDefault();
-    if (!inviteCodeInput || inviteCodeInput.trim().length < 4) {
-      setError('Please enter a valid 6-character private invite code.');
+    if (!inviteCodeInput || inviteCodeInput.trim().length < 6) {
+      setError('Please enter a valid private invite code (6 or 7 characters).');
       return;
     }
     if (!isAuthenticated) {
@@ -489,22 +510,18 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {[
-            { label: '₹10', bootPaise: 1000, desc: 'Casual Match' },
-            { label: '₹20', bootPaise: 2000, desc: 'Standard Match' },
-            { label: '₹50', bootPaise: 5000, desc: 'Popular Room' },
-            { label: '₹100', bootPaise: 10000, desc: 'High Stakes' },
-            { label: '₹500', bootPaise: 50000, desc: 'VIP Roller' },
-          ].map((option) => (
+          {bootOptionsPaise.map((bootPaise, idx) => (
             <button
-              key={option.bootPaise}
-              onClick={() => handleQuickPlay(option.bootPaise)}
-              disabled={quickPlayLoading === option.bootPaise}
+              key={bootPaise}
+              onClick={() => handleQuickPlay(bootPaise)}
+              disabled={quickPlayLoading === bootPaise}
               className="p-4 rounded-2xl bg-gradient-to-b from-slate-950 to-slate-900 border border-slate-800 hover:border-amber-500/60 transition-all text-center group cursor-pointer shadow-md relative overflow-hidden"
             >
-              <span className="text-[10px] text-amber-400 font-extrabold uppercase block mb-1">{option.desc}</span>
+              <span className="text-[10px] text-amber-400 font-extrabold uppercase block mb-1">
+                {idx === 0 ? 'Configured Boot' : 'Configured'}
+              </span>
               <span className="text-xl font-black text-slate-100 group-hover:text-amber-400 transition-colors">
-                {option.label}
+                ₹{(bootPaise / 100).toFixed(0)}
               </span>
               <span className="text-[9px] text-slate-500 block mt-1 font-mono">BOOT STAKE</span>
             </button>
@@ -783,15 +800,15 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Boot Amount (₹)</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Boot Amount (from Admin Settings)</label>
                     <select
-                      value={createStakeTier}
-                      onChange={(e) => setCreateStakeTier(e.target.value)}
+                      value={createBootAmountPaise}
+                      onChange={(e) => setCreateBootAmountPaise(Number(e.target.value))}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
                     >
-                      <option value="LOW">Boot ₹10 (Min Buy-In ₹10)</option>
-                      <option value="MEDIUM">Boot ₹50 (Min Buy-In ₹50)</option>
-                      <option value="HIGH">Boot ₹100 / ₹250 (High Stakes)</option>
+                      {bootOptionsPaise.map((boot) => (
+                        <option key={boot} value={boot}>Boot ₹{(boot / 100).toFixed(0)}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -862,14 +879,14 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
                 <Key className="w-5 h-5 text-amber-400" />
                 <span>Join Private Room</span>
               </h3>
-              <p className="text-xs text-slate-400 mb-5">Enter the 6-character invite code provided by the host</p>
+              <p className="text-xs text-slate-400 mb-5">Enter the private invite code provided by the host</p>
 
               <form onSubmit={handleJoinPrivateSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Invite Code</label>
                   <input
                     type="text"
-                    maxLength={6}
+                    maxLength={7}
                     placeholder="e.g. AB12CD"
                     value={inviteCodeInput}
                     onChange={(e) => setInviteCodeInput(e.target.value.toUpperCase())}

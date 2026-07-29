@@ -3,6 +3,11 @@ package com.teenpatti.platform.user;
 import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -17,31 +22,54 @@ public class UserPresenceService {
 
     private final UserRepository userRepository;
     private final WebSocketEventPublisher webSocketEventPublisher;
+    private final MongoTemplate mongoTemplate;
 
     public void markOnline(String userId) {
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setOnline(true);
-            user.setLastSeenAt(Instant.now());
-            userRepository.save(user);
-            webSocketEventPublisher.publishUserStatusChanged(userId, true);
+        try {
+            User existing = userRepository.findById(userId).orElse(null);
+            boolean wasOffline = existing == null || !existing.isOnline();
+
+            // Version-less update avoids heartbeat storms causing OptimisticLockingFailureException 500s.
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("_id").is(userId)),
+                    new Update().set("isOnline", true).set("lastSeenAt", Instant.now()),
+                    User.class
+            );
+
+            if (wasOffline) {
+                webSocketEventPublisher.publishUserStatusChanged(userId, true);
+            }
             log.debug("Marked user [{}] online", userId);
-        });
+        } catch (OptimisticLockingFailureException ex) {
+            log.debug("Presence online update raced for user [{}] — ignored", userId);
+        } catch (Exception ex) {
+            log.warn("Failed to mark user [{}] online: {}", userId, ex.getMessage());
+        }
     }
 
     public void markOffline(String userId) {
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setOnline(false);
-            user.setLastSeenAt(Instant.now());
-            userRepository.save(user);
+        try {
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("_id").is(userId)),
+                    new Update().set("isOnline", false).set("lastSeenAt", Instant.now()),
+                    User.class
+            );
             webSocketEventPublisher.publishUserStatusChanged(userId, false);
             log.debug("Marked user [{}] offline", userId);
-        });
+        } catch (Exception ex) {
+            log.warn("Failed to mark user [{}] offline: {}", userId, ex.getMessage());
+        }
     }
 
     public void touchLastSeen(String userId) {
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setLastSeenAt(Instant.now());
-            userRepository.save(user);
-        });
+        try {
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("_id").is(userId)),
+                    new Update().set("lastSeenAt", Instant.now()),
+                    User.class
+            );
+        } catch (Exception ex) {
+            log.debug("touchLastSeen failed for [{}]: {}", userId, ex.getMessage());
+        }
     }
 }

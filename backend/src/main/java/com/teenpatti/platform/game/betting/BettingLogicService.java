@@ -28,6 +28,7 @@ public class BettingLogicService {
 
     private final WalletService walletService;
     private final WebSocketEventPublisher eventPublisher;
+    private final com.teenpatti.platform.game.engine.HandContextManager handContextManager;
 
     public BettingState buildBettingState(Table table, BettingRoundEngine engine, String userId) {
         if (table == null || engine == null || userId == null) {
@@ -38,42 +39,71 @@ public class BettingLogicService {
         PlayerStatus status = engine.getPlayerStatus(userId);
         boolean inHand = status != null && status != PlayerStatus.PACKED;
         boolean myTurn = inHand && userId.equals(engine.getCurrentTurnPlayerId());
+        long stakeUnit = engine.getCurrentBaseStakePaise() > 0
+                ? engine.getCurrentBaseStakePaise()
+                : config.getBootAmountPaise();
+        int ratio = Math.max(1, config.getBlindSeenRatio());
+        long blindAmount = inHand ? stakeUnit : 0L;
+        long chaalAmount = inHand ? stakeUnit * ratio : 0L;
         long requiredBet = inHand ? engine.getRequiredBetPaise(userId) : 0L;
         long minRaise = inHand ? computeMinRaiseBetPaise(engine, userId) : 0L;
+        long maxBet = config.getMaxBetPaise();
+        List<Long> raiseOptions = inHand ? computeRaiseOptions(engine, userId) : List.of();
+        long walletBalance = walletService.getBalance(userId).getBalancePaise();
+        int turnTimerSeconds = config.getTurnTimeoutSeconds();
+        String playerState = status != null ? status.name() : PlayerStatus.PACKED.name();
+        long showCost = inHand ? Math.max(config.getShowCostPaise(), chaalAmount) : 0L;
+        long sideShowCost = inHand ? Math.max(config.getSideShowCostPaise(), chaalAmount) : 0L;
+        List<String> allowed = resolveAllowedActions(table.getId(), engine, userId);
+        allowed = filterAffordableActions(allowed, engine, userId, walletBalance);
+        if (allowed.contains("SHOW_ACCEPT") || allowed.contains("SIDE_SHOW_ACCEPT")
+                || allowed.contains("SIDE_SHOW_REJECT")) {
+            myTurn = true;
+        }
 
         return BettingState.builder()
                 .tableId(table.getId())
                 .userId(userId)
+                .playerState(playerState)
                 .potPaise(engine.getPotPaise())
                 .currentBaseStakePaise(engine.getCurrentBaseStakePaise())
+                .blindAmountPaise(blindAmount)
+                .chaalAmountPaise(chaalAmount)
+                .showCostPaise(showCost)
+                .sideShowCostPaise(sideShowCost)
                 .requiredBetPaise(requiredBet)
                 .minRaiseBetPaise(minRaise)
-                .maxBetPaise(config.getMaxBetPaise())
+                .maxBetPaise(maxBet)
+                .raiseOptionsPaise(raiseOptions.stream().filter(v -> v <= walletBalance).toList())
                 .playerContributedPaise(engine.getPlayerContributedPaise(userId))
+                .walletBalancePaise(walletBalance)
                 .blindSeenRatio(config.getBlindSeenRatio())
+                .turnTimerSeconds(turnTimerSeconds)
                 .myTurn(myTurn)
-                .allowedActions(resolveAllowedActions(engine, userId))
+                .allowedActions(allowed)
                 .build();
     }
 
     /**
      * Resolves the authoritative bet amount for an action before wallet debit.
+     * Client-requested amounts are ignored for Blind/Chaal/Show — server is source of truth.
      */
     public long resolveBetAmount(String actionType, BettingRoundEngine engine, String userId, long requestedAmount) {
         String normalized = normalizeActionType(actionType);
         return switch (normalized) {
-            case "PLAY_BLIND", "CHAAL", "CALL" -> {
-                long required = engine.getRequiredBetPaise(userId);
-                yield requestedAmount > 0 ? Math.max(requestedAmount, required) : required;
-            }
+            case "PLAY_BLIND", "BLIND", "CHAAL", "CALL" -> engine.getRequiredBetPaise(userId);
             case "RAISE" -> {
-                long minRaise = computeMinRaiseBetPaise(engine, userId);
-                if (requestedAmount > 0) {
-                    yield Math.max(requestedAmount, minRaise);
+                List<Long> options = computeRaiseOptions(engine, userId);
+                if (options.isEmpty()) {
+                    yield 0L;
                 }
-                yield minRaise;
+                if (requestedAmount > 0 && options.contains(requestedAmount)) {
+                    yield requestedAmount;
+                }
+                yield options.get(0);
             }
-            case "SHOW" -> engine.getRequiredBetPaise(userId);
+            case "SHOW" -> Math.max(engine.getConfig().getShowCostPaise(), engine.getRequiredBetPaise(userId));
+            case "SIDE_SHOW_REQUEST" -> Math.max(engine.getConfig().getSideShowCostPaise(), engine.getRequiredBetPaise(userId));
             default -> 0L;
         };
     }
@@ -118,7 +148,8 @@ public class BettingLogicService {
 
     public void publishBettingState(Table table, BettingRoundEngine engine, String userId) {
         BettingState state = buildBettingState(table, engine, userId);
-        eventPublisher.publishBettingState(table.getId(), state);
+        // Per-player only — shared table topic would overwrite everyone else's myTurn/actions.
+        eventPublisher.publishPrivateBettingState(userId, state);
     }
 
     public void publishBettingStateForTable(Table table, BettingRoundEngine engine) {
@@ -132,6 +163,10 @@ public class BettingLogicService {
     }
 
     public List<String> resolveAllowedActions(BettingRoundEngine engine, String userId) {
+        return resolveAllowedActions(null, engine, userId);
+    }
+
+    public List<String> resolveAllowedActions(String tableId, BettingRoundEngine engine, String userId) {
         List<String> actions = new ArrayList<>();
         if (engine.isHandFinished()) {
             return actions;
@@ -142,52 +177,196 @@ public class BettingLogicService {
             return actions;
         }
 
-        if (status == PlayerStatus.BLIND) {
-            actions.add("SEE_CARDS");
+        // Pending side-show: only the target may Accept/Reject.
+        if (tableId != null) {
+            var pendingShow = handContextManager.getPendingShow(tableId);
+            if (pendingShow.isPresent()) {
+                if (userId.equals(pendingShow.get().targetId())) {
+                    actions.add("SHOW_ACCEPT");
+                }
+                return actions;
+            }
+
+            var pending = handContextManager.getPendingSideShow(tableId);
+            if (pending.isPresent()) {
+                if (userId.equals(pending.get().targetId())) {
+                    actions.add("SIDE_SHOW_ACCEPT");
+                    actions.add("SIDE_SHOW_REJECT");
+                }
+                return actions;
+            }
         }
 
         boolean myTurn = userId.equals(engine.getCurrentTurnPlayerId());
-        if (!myTurn) {
+
+        if (status == PlayerStatus.BLIND) {
+            actions.add("SEE_CARDS");
+            if (!myTurn) {
+                return actions;
+            }
+            actions.add("BLIND");
+            if (canRaise(engine, userId)) {
+                actions.add("RAISE");
+            }
+            actions.add("PACK");
+            // Blind players may Show when only 2 remain — cards stay hidden on their UI.
+            if (engine.getConfig().isShowEnabled() && engine.getActivePlayerIds().size() == 2) {
+                actions.add("SHOW");
+            }
             return actions;
         }
 
-        if (status == PlayerStatus.BLIND) {
-            actions.add("PLAY_BLIND");
-        }
-        actions.add("CHAAL");
-        actions.add("CALL");
-        actions.add("PACK");
-
-        if (canRaise(engine, userId)) {
-            actions.add("RAISE");
-        }
-        if (engine.getActivePlayerIds().size() == 2) {
-            actions.add("SHOW");
-        }
-        if (status == PlayerStatus.SEEN && engine.getActivePlayerIds().size() > 2) {
-            actions.add("SIDE_SHOW_REQUEST");
+        if (status == PlayerStatus.SEEN) {
+            if (!myTurn) {
+                return actions;
+            }
+            actions.add("CHAAL");
+            if (canRaise(engine, userId)) {
+                actions.add("RAISE");
+            }
+            actions.add("PACK");
+            if (engine.getConfig().isShowEnabled() && engine.getActivePlayerIds().size() == 2) {
+                actions.add("SHOW");
+            }
+            if (canRequestSideShow(engine, userId)) {
+                actions.add("SIDE_SHOW_REQUEST");
+            }
         }
 
         return actions;
     }
 
+    private List<String> filterAffordableActions(
+            List<String> actions, BettingRoundEngine engine, String userId, long walletBalance) {
+        List<String> out = new ArrayList<>();
+        for (String action : actions) {
+            if ("PACK".equals(action) || "SEE_CARDS".equals(action)
+                    || "SIDE_SHOW_ACCEPT".equals(action) || "SIDE_SHOW_REJECT".equals(action)
+                    || "SHOW_ACCEPT".equals(action)) {
+                out.add(action);
+                continue;
+            }
+            long cost = resolveBetAmount(action, engine, userId, 0L);
+            if (cost <= 0 || cost <= walletBalance) {
+                out.add(action);
+            }
+        }
+        // Raise only if at least one affordable option remains
+        if (out.contains("RAISE")) {
+            List<Long> affordable = computeRaiseOptions(engine, userId).stream()
+                    .filter(v -> v <= walletBalance)
+                    .toList();
+            if (affordable.isEmpty()) {
+                out.remove("RAISE");
+            }
+        }
+        return out;
+    }
+
+    public String resolveSideShowTarget(BettingRoundEngine engine, String requesterId) {
+        List<String> order = engine.getOrderedPlayerIds();
+        int currentIdx = order.indexOf(requesterId);
+        if (currentIdx < 0) {
+            return null;
+        }
+        int n = order.size();
+        for (int i = 1; i < n; i++) {
+            int idx = (currentIdx - i + n) % n;
+            String candidate = order.get(idx);
+            if (engine.getPlayerStatus(candidate) == PlayerStatus.SEEN) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The other active player when exactly two remain (Show challenge target).
+     */
+    public String resolveShowTarget(BettingRoundEngine engine, String requesterId) {
+        if (engine == null || requesterId == null) {
+            return null;
+        }
+        return engine.getActivePlayerIds().stream()
+                .filter(id -> !id.equals(requesterId))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public boolean canRequestSideShow(BettingRoundEngine engine, String userId) {
+        if (engine == null || userId == null || engine.isHandFinished() || !engine.getConfig().isSideShowEnabled()) {
+            return false;
+        }
+        if (!userId.equals(engine.getCurrentTurnPlayerId())) {
+            return false;
+        }
+        if (engine.getPlayerStatus(userId) != PlayerStatus.SEEN) {
+            return false;
+        }
+        List<String> active = engine.getActivePlayerIds();
+        if (active.size() <= 2) {
+            return false;
+        }
+        return active.stream()
+                .filter(pid -> !pid.equals(userId))
+                .anyMatch(pid -> engine.getPlayerStatus(pid) == PlayerStatus.SEEN);
+    }
+
     private boolean canRaise(BettingRoundEngine engine, String userId) {
-        long minRaise = computeMinRaiseBetPaise(engine, userId);
-        return minRaise > 0 && minRaise <= engine.getConfig().getMaxBetPaise() * engine.getConfig().getBlindSeenRatio();
+        return !computeRaiseOptions(engine, userId).isEmpty();
+    }
+
+    private List<Long> computeRaiseOptions(BettingRoundEngine engine, String userId) {
+        PlayerStatus status = engine.getPlayerStatus(userId);
+        if (status == null || status == PlayerStatus.PACKED) {
+            return List.of();
+        }
+        long currentStake = engine.getCurrentBaseStakePaise();
+        int ratio = Math.max(1, engine.getConfig().getBlindSeenRatio());
+        long maxBet = engine.getConfig().getMaxBetPaise();
+
+        List<Long> configured = status == PlayerStatus.SEEN
+                ? engine.getConfig().getSeenRaiseOptionsPaise()
+                : engine.getConfig().getBlindRaiseOptionsPaise();
+
+        List<Long> options = new ArrayList<>();
+        if (configured != null) {
+            configured.stream()
+                    .filter(v -> v != null && v > 0)
+                    .filter(v -> {
+                        long newUnit = status == PlayerStatus.SEEN ? v / ratio : v;
+                        return newUnit > currentStake;
+                    })
+                    .sorted()
+                    .forEach(options::add);
+        }
+
+        if (options.isEmpty()) {
+            // Always offer at least 2× / 4× current payment so Raise never disappears.
+            long currentPay = Math.max(1L, status == PlayerStatus.SEEN ? currentStake * ratio : currentStake);
+            long twoX = currentPay * 2;
+            long fourX = currentPay * 4;
+            long payCap = Math.max(currentPay * 8, status == PlayerStatus.SEEN ? maxBet * (long) ratio : maxBet);
+            // Hard safety cap: never more than 50× table boot payment.
+            long bootCap = Math.max(engine.getConfig().getBootAmountPaise(), 100L) * 50L
+                    * (status == PlayerStatus.SEEN ? ratio : 1L);
+            payCap = Math.min(payCap, bootCap);
+            if (twoX <= payCap) {
+                options.add(twoX);
+            }
+            if (fourX <= payCap && fourX != twoX) {
+                options.add(fourX);
+            }
+        }
+        // Drop absurd options above 50× boot.
+        long hardCap = Math.max(engine.getConfig().getBootAmountPaise(), 100L) * 50L
+                * (status == PlayerStatus.SEEN ? ratio : 1L);
+        return options.stream().filter(v -> v != null && v > 0 && v <= hardCap).distinct().sorted().toList();
     }
 
     private long computeMinRaiseBetPaise(BettingRoundEngine engine, String userId) {
-        PlayerStatus status = engine.getPlayerStatus(userId);
-        if (status == null || status == PlayerStatus.PACKED) {
-            return 0L;
-        }
-        long nextBaseStake = engine.getCurrentBaseStakePaise() * 2;
-        if (nextBaseStake > engine.getConfig().getMaxBetPaise()) {
-            return 0L;
-        }
-        return status == PlayerStatus.SEEN
-                ? nextBaseStake * engine.getConfig().getBlindSeenRatio()
-                : nextBaseStake;
+        List<Long> options = computeRaiseOptions(engine, userId);
+        return options.isEmpty() ? 0L : options.get(0);
     }
 
     private String normalizeActionType(String actionType) {
@@ -197,6 +376,9 @@ public class BettingLogicService {
         String upper = actionType.toUpperCase(Locale.ROOT);
         if ("CALL".equals(upper)) {
             return "CHAAL";
+        }
+        if ("BLIND".equals(upper)) {
+            return "PLAY_BLIND";
         }
         return upper;
     }

@@ -84,7 +84,8 @@ axiosClient.interceptors.response.use(
         `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'}/auth/refresh`,
         { refreshToken }
       );
-      const payload = res?.data ?? res;
+      // Backend wraps payload as { success, message, data: {...tokens...} }
+      const payload = res?.data?.data ?? res?.data ?? res;
       const newAccessToken = payload?.accessToken;
       const newRefreshToken = payload?.refreshToken;
 

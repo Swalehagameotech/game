@@ -34,11 +34,19 @@ public class PlayerViewGameState {
     private List<String> packedPlayerIds;
     private long potPaise;
     private long currentBaseStakePaise;
+    private long blindAmountPaise;
+    private long chaalAmountPaise;
+    private long showCostPaise;
+    private long sideShowCostPaise;
     private long requiredBetPaise;
     private long minRaiseBetPaise;
     private long maxBetPaise;
+    private List<Long> raiseOptionsPaise;
     private long playerContributedPaise;
+    private long walletBalancePaise;
     private int blindSeenRatio;
+    private String playerState;
+    private int turnTimerSeconds;
     private boolean myTurn;
     private List<String> allowedActions;
     private List<PlayerSummaryView> players;
@@ -48,4 +56,8 @@ public class PlayerViewGameState {
     private String inviteCode;
     private int countdownSeconds;
     private long bootAmountPaise;
+    /** Present while a final Show is awaiting accept (null otherwise). */
+    private PendingShowView pendingShow;
+    /** Seated players in disconnect grace period. */
+    private List<String> disconnectedPlayerIds;
 }

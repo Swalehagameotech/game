@@ -52,6 +52,43 @@ public class TableController {
         return ResponseEntity.ok(ApiResponse.success("Active game session retrieved", session));
     }
 
+    @PostMapping("/{tableId}/see-cards")
+    public ResponseEntity<ApiResponse<com.teenpatti.platform.game.dto.SeeCardsResponse>> seeCards(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        var response = tableService.seeCards(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Cards revealed", response));
+    }
+
+    @PostMapping("/{tableId}/actions")
+    public ResponseEntity<ApiResponse<com.teenpatti.platform.game.betting.BettingState>> playAction(
+            @CurrentUser String userId,
+            @PathVariable String tableId,
+            @RequestBody com.teenpatti.platform.table.dto.PlayerActionRequest request) {
+        var response = tableService.processPlayerAction(
+                userId,
+                tableId,
+                request.getActionType(),
+                request.getAmountPaise());
+        return ResponseEntity.ok(ApiResponse.success("Action applied", response));
+    }
+
+    @GetMapping("/{tableId}/live")
+    public ResponseEntity<ApiResponse<com.teenpatti.platform.websocket.dto.PlayerViewGameState>> getLiveTableState(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        var response = tableService.getLivePlayerView(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Live table state retrieved", response));
+    }
+
+    @GetMapping("/{tableId}/betting-state")
+    public ResponseEntity<ApiResponse<com.teenpatti.platform.game.betting.BettingState>> getBettingState(
+            @CurrentUser String userId,
+            @PathVariable String tableId) {
+        var response = tableService.getBettingState(userId, tableId);
+        return ResponseEntity.ok(ApiResponse.success("Betting state retrieved", response));
+    }
+
     @GetMapping("/{tableId}")
     public ResponseEntity<ApiResponse<TableDetailResponse>> getTableDetails(
             @CurrentUser String userId,

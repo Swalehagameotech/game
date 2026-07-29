@@ -6,6 +6,7 @@ import com.teenpatti.platform.game.engine.GameEngineConfig;
 import com.teenpatti.platform.game.engine.HandContextManager;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
+import com.teenpatti.platform.user.UserRepository;
 import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +30,7 @@ class TurnManagementServiceTest {
     private TableRepository tableRepository;
     private HandContextManager handContextManager;
     private WebSocketEventPublisher eventPublisher;
+    private UserRepository userRepository;
     private TurnManagementService turnManagementService;
 
     @BeforeEach
@@ -36,7 +38,10 @@ class TurnManagementServiceTest {
         tableRepository = mock(TableRepository.class);
         handContextManager = mock(HandContextManager.class);
         eventPublisher = mock(WebSocketEventPublisher.class);
-        turnManagementService = new TurnManagementService(tableRepository, handContextManager, eventPublisher);
+        userRepository = mock(UserRepository.class);
+        when(userRepository.findById(anyString())).thenReturn(Optional.empty());
+        turnManagementService = new TurnManagementService(
+                tableRepository, handContextManager, eventPublisher, userRepository);
         ReflectionTestUtils.setField(turnManagementService, "turnTimeoutSeconds", 20);
     }
 
@@ -67,7 +72,7 @@ class TurnManagementServiceTest {
         AtomicBoolean timedOut = new AtomicBoolean(false);
         turnManagementService.beginTurn("t1", "p2", 1, () -> timedOut.set(true));
 
-        verify(eventPublisher).publishTurnStarted(eq("t1"), eq("p2"), eq(1), eq(20));
+        verify(eventPublisher).publishTurnStarted(eq("t1"), eq("p2"), anyString(), eq(1), eq(20));
         verify(eventPublisher).publishTurnState(eq("t1"), any(TurnState.class));
         verify(tableRepository).save(table);
         assertEquals("p2", table.getCurrentTurnUserId());

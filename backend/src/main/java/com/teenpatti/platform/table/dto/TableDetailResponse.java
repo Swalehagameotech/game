@@ -32,4 +32,5 @@ public class TableDetailResponse {
     private String inviteCode;
     private List<SeatedPlayerResponse> seatedPlayers;
     private List<String> leftMidHandPlayerIds;
+    private List<String> disconnectedPlayerIds;
 }

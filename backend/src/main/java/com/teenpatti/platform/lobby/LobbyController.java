@@ -5,6 +5,7 @@ import com.teenpatti.platform.common.response.PageResponse;
 import com.teenpatti.platform.common.security.CurrentUser;
 import com.teenpatti.platform.lobby.dto.CreatePrivateTableRequest;
 import com.teenpatti.platform.lobby.dto.EligibilityCheckResponse;
+import com.teenpatti.platform.lobby.dto.BootOptionsResponse;
 import com.teenpatti.platform.lobby.dto.PrivateTableCreatedResponse;
 import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
 import com.teenpatti.platform.table.dto.JoinTableResponse;
@@ -35,6 +36,12 @@ public class LobbyController {
         return ResponseEntity.ok(ApiResponse.success("Public tables retrieved successfully", response));
     }
 
+    @GetMapping("/boot-options")
+    public ResponseEntity<ApiResponse<BootOptionsResponse>> getBootOptions(@CurrentUser String userId) {
+        BootOptionsResponse response = lobbyService.getBootOptions();
+        return ResponseEntity.ok(ApiResponse.success("Boot options retrieved successfully", response));
+    }
+
     @PostMapping("/tables/private")
     public ResponseEntity<ApiResponse<PrivateTableCreatedResponse>> createPrivateTable(
             @CurrentUser String userId,
@@ -61,6 +68,17 @@ public class LobbyController {
 
     @PostMapping("/tables/private/join")
     public ResponseEntity<ApiResponse<JoinTableResponse>> joinPrivateTableByInviteCode(
+            @CurrentUser String userId,
+            @RequestParam String inviteCode) {
+        JoinTableResponse response = lobbyService.joinPrivateTableByInviteCode(userId, inviteCode);
+        return ResponseEntity.ok(ApiResponse.success("Joined private table successfully", response));
+    }
+
+    /**
+     * Compatibility mapping for clients that accidentally call GET on the join URL.
+     */
+    @GetMapping("/tables/private/join")
+    public ResponseEntity<ApiResponse<JoinTableResponse>> joinPrivateTableByInviteCodeGet(
             @CurrentUser String userId,
             @RequestParam String inviteCode) {
         JoinTableResponse response = lobbyService.joinPrivateTableByInviteCode(userId, inviteCode);

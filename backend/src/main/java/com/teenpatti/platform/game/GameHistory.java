@@ -58,6 +58,12 @@ public class GameHistory {
 
     private long winnerPayoutPaise;
 
+    /** Boot collected at the start of this round. */
+    private long bootAmountPaise;
+
+    /** Hand duration in seconds (endedAt - startedAt). */
+    private long durationSeconds;
+
     private WinningCategory winningCategory;
 
     private HandSummary handSummary;

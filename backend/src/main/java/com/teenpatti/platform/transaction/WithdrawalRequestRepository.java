@@ -12,6 +12,8 @@ public interface WithdrawalRequestRepository extends MongoRepository<WithdrawalR
 
     java.util.List<WithdrawalRequest> findByUserIdAndStatus(String userId, WithdrawalStatus status);
 
+    java.util.List<WithdrawalRequest> findByUserId(String userId);
+
     Page<WithdrawalRequest> findByStatus(WithdrawalStatus status, Pageable pageable);
 
     long countByStatus(WithdrawalStatus status);

@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import com.teenpatti.platform.user.UserRole;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -34,4 +35,7 @@ public class RegisterRequest {
     @NotBlank(message = "Display name is required")
     @Size(min = 3, max = 20, message = "Display name must be between 3 and 20 characters")
     private String displayName;
+
+    @Builder.Default
+    private UserRole role = UserRole.PLAYER;
 }

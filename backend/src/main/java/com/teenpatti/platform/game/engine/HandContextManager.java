@@ -13,14 +13,22 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class HandContextManager {
 
+    public record PendingSideShow(String requesterId, String targetId) {}
+
+    public record PendingShow(String requesterId, String targetId) {}
+
     private final ConcurrentHashMap<String, BettingRoundEngine> engines = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Instant> handStartTimes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> dealerSeats = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PendingSideShow> pendingSideShows = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, PendingShow> pendingShows = new ConcurrentHashMap<>();
 
     public void registerHand(String tableId, BettingRoundEngine engine, Instant startedAt, int dealerSeatIndex) {
         engines.put(tableId, engine);
         handStartTimes.put(tableId, startedAt);
         dealerSeats.put(tableId, dealerSeatIndex);
+        pendingSideShows.remove(tableId);
+        pendingShows.remove(tableId);
     }
 
     public Optional<BettingRoundEngine> getEngine(String tableId) {
@@ -54,8 +62,34 @@ public class HandContextManager {
         return next;
     }
 
+    public void setPendingSideShow(String tableId, String requesterId, String targetId) {
+        pendingSideShows.put(tableId, new PendingSideShow(requesterId, targetId));
+    }
+
+    public Optional<PendingSideShow> getPendingSideShow(String tableId) {
+        return Optional.ofNullable(pendingSideShows.get(tableId));
+    }
+
+    public void clearPendingSideShow(String tableId) {
+        pendingSideShows.remove(tableId);
+    }
+
+    public void setPendingShow(String tableId, String requesterId, String targetId) {
+        pendingShows.put(tableId, new PendingShow(requesterId, targetId));
+    }
+
+    public Optional<PendingShow> getPendingShow(String tableId) {
+        return Optional.ofNullable(pendingShows.get(tableId));
+    }
+
+    public void clearPendingShow(String tableId) {
+        pendingShows.remove(tableId);
+    }
+
     public void clearHand(String tableId) {
         engines.remove(tableId);
         handStartTimes.remove(tableId);
+        pendingSideShows.remove(tableId);
+        pendingShows.remove(tableId);
     }
 }

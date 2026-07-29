@@ -16,12 +16,24 @@ import java.time.Instant;
 public class AdminUserSummaryDto {
 
     private String id;
+    private String profileImage;
+    private String username;
+    private String fullName;
     private String email;
+    private String mobileNumber;
     private String displayName;
     private UserRole role;
     private AccountStatus accountStatus;
     private boolean online;
     private long walletBalancePaise;
+    private String currentTableId;
+    private String currentGameId;
     private int matchesPlayedCount;
+    private long gamesWon;
+    private long gamesLost;
+    private long totalWinningsPaise;
+    private long totalDepositsPaise;
+    private long totalWithdrawalsPaise;
     private Instant createdAt;
+    private Instant lastLogin;
 }

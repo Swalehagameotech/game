@@ -11,11 +11,13 @@ import com.teenpatti.platform.user.AccountStatus;
 import com.teenpatti.platform.user.KycStatus;
 import com.teenpatti.platform.user.User;
 import com.teenpatti.platform.user.UserRepository;
+import com.teenpatti.platform.user.UserRole;
 import com.teenpatti.platform.user.UserPresenceService;
 import com.teenpatti.platform.wallet.Wallet;
 import com.teenpatti.platform.wallet.WalletRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +40,8 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final UserPresenceService userPresenceService;
     private final SessionAggregateService sessionAggregateService;
+    @Value("${app.auth.initial-wallet-paise:0}")
+    private long initialWalletPaise;
 
     /**
      * Atomically registers a new User and initializes an empty Wallet (balancePaise = 0).
@@ -60,15 +64,15 @@ public class AuthService {
                 .displayName(request.getDisplayName().trim())
                 .kycStatus(KycStatus.NOT_STARTED)
                 .accountStatus(AccountStatus.ACTIVE)
-                .role(com.teenpatti.platform.user.UserRole.PLAYER)
+                .role(request.getRole() != null ? request.getRole() : UserRole.PLAYER)
                 .build();
 
         User savedUser = userRepository.save(user);
 
-        // Create welcome bonus wallet atomically for new user (100,000 Paise = ₹1,000)
+        // Initialize user wallet from config (default 0 paise).
         Wallet wallet = Wallet.builder()
                 .userId(savedUser.getId())
-                .balancePaise(100_000L)
+                .balancePaise(initialWalletPaise)
                 .currency("INR")
                 .build();
         walletRepository.save(wallet);
@@ -132,7 +136,7 @@ public class AuthService {
 
         Wallet wallet = Wallet.builder()
                 .userId(savedUser.getId())
-                .balancePaise(100_000L)
+                .balancePaise(initialWalletPaise)
                 .currency("INR")
                 .build();
         walletRepository.save(wallet);

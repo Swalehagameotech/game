@@ -33,7 +33,7 @@ class BettingLogicServiceTest {
     void setUp() {
         walletService = mock(WalletService.class);
         eventPublisher = mock(WebSocketEventPublisher.class);
-        bettingLogicService = new BettingLogicService(walletService, eventPublisher);
+        bettingLogicService = new BettingLogicService(walletService, eventPublisher, mock(com.teenpatti.platform.game.engine.HandContextManager.class));
 
         GameEngineConfig config = new GameEngineConfig(1000L, 50_000L, 5.0, 2);
         engine = new BettingRoundEngine(config);
@@ -59,8 +59,9 @@ class BettingLogicServiceTest {
 
         assertEquals(1000L, state.getRequiredBetPaise());
         assertEquals(2000L, state.getMinRaiseBetPaise());
-        assertTrue(state.getAllowedActions().contains("PLAY_BLIND"));
+        assertTrue(state.getAllowedActions().contains("BLIND"));
         assertTrue(state.getAllowedActions().contains("SEE_CARDS"));
+        assertFalse(state.getAllowedActions().contains("CHAAL"));
         assertTrue(state.isMyTurn());
     }
 
@@ -124,7 +125,17 @@ class BettingLogicServiceTest {
     }
 
     @Test
-    @DisplayName("SHOW allowed only when exactly two active players remain")
+    @DisplayName("Blind player can See Cards even when it is not their turn")
+    void resolveAllowedActions_blindOffTurnCanSeeCards() {
+        // p1 is on turn; p2 is BLIND but waiting
+        List<String> p2Actions = bettingLogicService.resolveAllowedActions(engine, "p2");
+
+        assertTrue(p2Actions.contains("SEE_CARDS"));
+        assertFalse(p2Actions.contains("BLIND"));
+        assertFalse(p2Actions.contains("CHAAL"));
+    }
+
+    @Test
     void resolveAllowedActions_showOnlyWithTwoPlayers() {
         engine.applyAction(PlayerAction.of("p1", PlayerActionType.PACK));
         engine.applyAction(PlayerAction.of("p2", PlayerActionType.PACK));

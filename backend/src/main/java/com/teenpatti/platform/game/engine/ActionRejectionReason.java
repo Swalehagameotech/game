@@ -7,6 +7,8 @@ public enum ActionRejectionReason {
     NOT_YOUR_TURN("It is not your turn to act."),
     ALREADY_SEEN("Player has already seen their cards."),
     MUST_BE_BLIND("Action requires player to be in BLIND status."),
+    MUST_BE_SEEN("Action requires player to be in SEEN status."),
+    SHOW_DISABLED("Show is currently disabled by configuration."),
     INSUFFICIENT_BET_AMOUNT("Bet amount does not meet the minimum required for player status."),
     EXCEEDS_MAX_BET("Bet amount exceeds the maximum allowed raise limit."),
     SHOW_REQUIRES_EXACTLY_TWO_PLAYERS("Show action is only valid when exactly two active players remain."),

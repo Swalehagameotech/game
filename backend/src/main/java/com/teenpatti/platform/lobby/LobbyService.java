@@ -3,10 +3,12 @@ package com.teenpatti.platform.lobby;
 import com.teenpatti.platform.common.exception.TableNotFoundException;
 import com.teenpatti.platform.common.response.PageResponse;
 import com.teenpatti.platform.lobby.config.StakeTierConfig;
+import com.teenpatti.platform.lobby.dto.BootOptionsResponse;
 import com.teenpatti.platform.lobby.dto.CreatePrivateTableRequest;
 import com.teenpatti.platform.lobby.dto.EligibilityCheckResponse;
 import com.teenpatti.platform.lobby.dto.PrivateTableCreatedResponse;
 import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
+import com.teenpatti.platform.admin.betting.BettingConfigurationService;
 import com.teenpatti.platform.table.StakeTier;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
@@ -44,9 +46,22 @@ public class LobbyService {
     private final PublicTableService publicTableService;
     private final PrivateTableService privateTableService;
     private final com.teenpatti.platform.table.TableService tableService;
+    private final BettingConfigurationService bettingConfigurationService;
 
     public List<TableSummaryResponse> getPublicTables() {
         return getPublicTables(null, 0, 50).getContent();
+    }
+
+    public BootOptionsResponse getBootOptions() {
+        var cfg = bettingConfigurationService.getActiveOrCreateDefault();
+        List<Long> bootOptions = cfg.getBootAmountOptions() != null && !cfg.getBootAmountOptions().isEmpty()
+                ? cfg.getBootAmountOptions().stream().filter(v -> v != null && v > 0).distinct().sorted().toList()
+                : List.of(Math.max(100L, cfg.getBootAmount()));
+        return BootOptionsResponse.builder()
+                .bootAmountOptionsPaise(bootOptions)
+                .minimumPlayers(Math.max(3, cfg.getMinimumPlayers()))
+                .maximumPlayers(Math.max(3, cfg.getMaximumPlayers()))
+                .build();
     }
 
     public PageResponse<TableSummaryResponse> getPublicTables(StakeTier stakeTier, int page, int size) {

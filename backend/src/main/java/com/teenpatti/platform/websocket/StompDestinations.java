@@ -24,4 +24,8 @@ public final class StompDestinations {
     public static String queueNotifications(String userId) {
         return "/queue/notifications/" + userId;
     }
+
+    public static String queueGame(String userId) {
+        return "/queue/game/" + userId;
+    }
 }

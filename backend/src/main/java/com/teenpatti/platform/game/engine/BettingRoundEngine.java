@@ -96,13 +96,17 @@ public class BettingRoundEngine {
 
     /**
      * Returns the required minimum bet amount in paise for the specified player given their current BLIND/SEEN status.
+     * Commercial rule: Blind pays 1× current stake unit; Seen pays blindSeenRatio × unit.
      */
     public long getRequiredBetPaise(String playerId) {
         PlayerStatus status = playerStatusMap.get(playerId);
         if (status == null || status == PlayerStatus.PACKED) {
             return 0L;
         }
-        return status == PlayerStatus.SEEN ? (currentBaseStakePaise * config.getBlindSeenRatio()) : currentBaseStakePaise;
+        long unit = currentBaseStakePaise > 0 ? currentBaseStakePaise : config.getBootAmountPaise();
+        return status == PlayerStatus.SEEN
+                ? unit * Math.max(1, config.getBlindSeenRatio())
+                : unit;
     }
 
     /**
@@ -121,10 +125,17 @@ public class BettingRoundEngine {
             throw new InvalidActionException(ActionRejectionReason.PLAYER_NOT_IN_HAND);
         }
 
-        // Action: SEE_CARDS (can be done anytime by a BLIND player)
+        // Action: SEE_CARDS — commercial Teen Patti: anytime while BLIND, once per hand; does not consume turn
         if (action.getActionType() == PlayerActionType.SEE_CARDS) {
-            if (playerStatusMap.get(playerId) == PlayerStatus.SEEN) {
+            PlayerStatus status = playerStatusMap.get(playerId);
+            if (status == PlayerStatus.PACKED) {
+                throw new InvalidActionException(ActionRejectionReason.PLAYER_NOT_IN_HAND);
+            }
+            if (status == PlayerStatus.SEEN) {
                 throw new InvalidActionException(ActionRejectionReason.ALREADY_SEEN);
+            }
+            if (status != PlayerStatus.BLIND) {
+                throw new InvalidActionException(ActionRejectionReason.MUST_BE_BLIND);
             }
             playerStatusMap.put(playerId, PlayerStatus.SEEN);
             return; // Does not advance turn
@@ -141,7 +152,7 @@ public class BettingRoundEngine {
             case CHAAL -> handleChaal(playerId, action.getAmountPaise());
             case RAISE -> handleRaise(playerId, action.getAmountPaise());
             case PACK -> handlePack(playerId);
-            case SHOW -> handleShow(playerId, action.getAmountPaise());
+            case SHOW -> recordShowRequest(playerId, action.getAmountPaise());
             default -> throw new IllegalArgumentException("Unsupported action type: " + action.getActionType());
         }
     }
@@ -150,7 +161,7 @@ public class BettingRoundEngine {
         if (playerStatusMap.get(playerId) != PlayerStatus.BLIND) {
             throw new InvalidActionException(ActionRejectionReason.MUST_BE_BLIND);
         }
-        long required = currentBaseStakePaise;
+        long required = getRequiredBetPaise(playerId);
         if (betAmount < required) {
             throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT,
                     "Play blind requires minimum bet of " + required + " paise, but got " + betAmount);
@@ -160,6 +171,9 @@ public class BettingRoundEngine {
     }
 
     private void handleChaal(String playerId, long betAmount) {
+        if (playerStatusMap.get(playerId) != PlayerStatus.SEEN) {
+            throw new InvalidActionException(ActionRejectionReason.MUST_BE_SEEN);
+        }
         long required = getRequiredBetPaise(playerId);
         if (betAmount < required) {
             throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT,
@@ -171,23 +185,26 @@ public class BettingRoundEngine {
 
     private void handleRaise(String playerId, long betAmount) {
         PlayerStatus status = playerStatusMap.get(playerId);
-        long newBaseStake = status == PlayerStatus.SEEN ? betAmount / config.getBlindSeenRatio() : betAmount;
-
-        if (newBaseStake <= currentBaseStakePaise) {
+        int ratio = Math.max(1, config.getBlindSeenRatio());
+        // betAmount is the cash paid. For SEEN, cash = ratio × new stake unit.
+        long newUnit = status == PlayerStatus.SEEN
+                ? Math.max(1L, betAmount / ratio)
+                : betAmount;
+        if (newUnit <= currentBaseStakePaise) {
             throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT,
                     "Raise must increase the base stake unit above " + currentBaseStakePaise + " paise");
         }
-        if (newBaseStake > config.getMaxBetPaise()) {
+        long paidRequired = status == PlayerStatus.SEEN ? newUnit * ratio : newUnit;
+        if (betAmount < paidRequired) {
+            throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT,
+                    "Raise requires payment of " + paidRequired + " paise");
+        }
+        if (betAmount > config.getMaxBetPaise() * (status == PlayerStatus.SEEN ? ratio : 1)) {
             throw new InvalidActionException(ActionRejectionReason.EXCEEDS_MAX_BET,
-                    "Base stake unit " + newBaseStake + " exceeds configured max limit " + config.getMaxBetPaise());
+                    "Raise amount " + betAmount + " exceeds configured max");
         }
 
-        long required = status == PlayerStatus.SEEN ? newBaseStake * config.getBlindSeenRatio() : newBaseStake;
-        if (betAmount < required) {
-            throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT);
-        }
-
-        this.currentBaseStakePaise = newBaseStake;
+        this.currentBaseStakePaise = newUnit;
         recordBet(playerId, betAmount);
         advanceTurn();
     }
@@ -204,25 +221,62 @@ public class BettingRoundEngine {
         }
     }
 
-    private void handleShow(String playerId, long betAmount) {
+    /**
+     * Records Show cost and adds it to the pot. Does NOT finish the hand — opponent must accept.
+     */
+    public synchronized void recordShowRequest(String playerId, long betAmount) {
+        validateShowRequest(playerId, betAmount);
+        recordBet(playerId, betAmount);
+    }
+
+    /**
+     * Resolves the showdown after the challenged player accepts Show.
+     */
+    public synchronized void resolveShowdownAfterShowAccept() {
+        if (handFinished) {
+            throw new InvalidActionException(ActionRejectionReason.HAND_ALREADY_FINISHED);
+        }
         List<String> activePlayers = getActivePlayerIds();
         if (activePlayers.size() != 2) {
             throw new InvalidActionException(ActionRejectionReason.SHOW_REQUIRES_EXACTLY_TWO_PLAYERS);
         }
+        finishHandByShow(activePlayers);
+    }
 
-        long required = getRequiredBetPaise(playerId);
+    private void validateShowRequest(String playerId, long betAmount) {
+        PlayerStatus status = playerStatusMap.get(playerId);
+        if (status == null || status == PlayerStatus.PACKED) {
+            throw new InvalidActionException(ActionRejectionReason.PLAYER_NOT_IN_HAND);
+        }
+        if (!config.isShowEnabled()) {
+            throw new InvalidActionException(ActionRejectionReason.SHOW_DISABLED);
+        }
+        List<String> activePlayers = getActivePlayerIds();
+        if (activePlayers.size() != 2) {
+            throw new InvalidActionException(ActionRejectionReason.SHOW_REQUIRES_EXACTLY_TWO_PLAYERS);
+        }
+        long required = Math.max(config.getShowCostPaise(), getRequiredBetPaise(playerId));
         if (betAmount < required) {
             throw new InvalidActionException(ActionRejectionReason.INSUFFICIENT_BET_AMOUNT,
                     "Show requires minimum bet of " + required + " paise, but got " + betAmount);
         }
+    }
 
-        recordBet(playerId, betAmount);
-        finishHandByShow(activePlayers);
+    private void handleShow(String playerId, long betAmount) {
+        recordShowRequest(playerId, betAmount);
+        resolveShowdownAfterShowAccept();
     }
 
     private void recordBet(String playerId, long betAmount) {
         potPaise += betAmount;
         playerContributedMap.put(playerId, playerContributedMap.getOrDefault(playerId, 0L) + betAmount);
+    }
+
+    public synchronized void addMetaBetToPot(String playerId, long amountPaise) {
+        if (amountPaise <= 0) {
+            return;
+        }
+        recordBet(playerId, amountPaise);
     }
 
     private void finishHandByFold(String winnerId) {
@@ -262,6 +316,48 @@ public class BettingRoundEngine {
                 .toList();
     }
 
+    /**
+     * Packs a player outside the normal turn flow (e.g. Side Show loser).
+     * @return true if the hand finished as a fold win
+     */
+    public synchronized boolean forcePack(String playerId) {
+        if (handFinished) {
+            return true;
+        }
+        if (!playerIds.contains(playerId) || playerStatusMap.get(playerId) == PlayerStatus.PACKED) {
+            return handFinished;
+        }
+        playerStatusMap.put(playerId, PlayerStatus.PACKED);
+        List<String> activePlayers = getActivePlayerIds();
+        if (activePlayers.size() == 1) {
+            finishHandByFold(activePlayers.get(0));
+            return true;
+        }
+        // If packed player had the turn, advance
+        if (playerId.equals(getCurrentTurnPlayerId())) {
+            advanceTurn();
+        }
+        return false;
+    }
+
+    /**
+     * @return userId of the weaker hand (to be packed), or null on tie favoring neither pack
+     */
+    public String resolveSideShowLoser(String playerA, String playerB) {
+        List<Card> handA = playerHandMap.get(playerA);
+        List<Card> handB = playerHandMap.get(playerB);
+        if (handA == null || handB == null) {
+            return null;
+        }
+        HandResult resultA = HandEvaluator.evaluateHand(handA);
+        HandResult resultB = HandEvaluator.evaluateHand(handB);
+        int cmp = HandEvaluator.compareHands(resultA, resultB);
+        if (cmp == 0) {
+            return null; // tie — neither packs in classic house rules we keep both
+        }
+        return cmp > 0 ? playerB : playerA;
+    }
+
     public List<String> getPlayerIdsByStatus(PlayerStatus status) {
         if (status == null) {
             return List.of();
@@ -285,9 +381,59 @@ public class BettingRoundEngine {
         currentTurnIndex = idx;
     }
 
+    /**
+     * Restores an in-progress hand from durable session state (e.g. after JVM restart).
+     */
+    public void restoreHand(
+            List<String> players,
+            Map<String, List<Card>> privateHands,
+            Map<String, PlayerStatus> statuses,
+            long pot,
+            long baseStake,
+            String currentTurnUserId) {
+        if (players == null || players.size() < 2) {
+            throw new IllegalArgumentException("At least 2 players are required to restore a hand");
+        }
+        if (privateHands == null || privateHands.isEmpty()) {
+            throw new IllegalArgumentException("Private hands must not be null or empty");
+        }
+
+        this.playerIds.clear();
+        this.playerIds.addAll(players);
+        this.playerStatusMap.clear();
+        this.playerHandMap.clear();
+        this.playerContributedMap.clear();
+        this.handFinished = false;
+        this.outcome = null;
+        this.potPaise = Math.max(0L, pot);
+        this.currentBaseStakePaise = Math.max(0L, baseStake);
+
+        for (String playerId : playerIds) {
+            List<Card> hand = privateHands.get(playerId);
+            if (hand == null || hand.size() != DeckConstants.CARDS_PER_HAND) {
+                throw new IllegalArgumentException(
+                        "Player " + playerId + " must have exactly " + DeckConstants.CARDS_PER_HAND + " cards");
+            }
+            this.playerHandMap.put(playerId, new ArrayList<>(hand));
+            PlayerStatus status = statuses != null ? statuses.get(playerId) : null;
+            this.playerStatusMap.put(playerId, status != null ? status : PlayerStatus.BLIND);
+            this.playerContributedMap.put(playerId, 0L);
+        }
+
+        if (currentTurnUserId != null && playerIds.contains(currentTurnUserId)) {
+            this.currentTurnIndex = playerIds.indexOf(currentTurnUserId);
+        } else {
+            this.currentTurnIndex = 0;
+        }
+    }
+
     public String getCurrentTurnPlayerId() {
         if (handFinished || playerIds.isEmpty()) return null;
         return playerIds.get(currentTurnIndex);
+    }
+
+    public List<String> getOrderedPlayerIds() {
+        return Collections.unmodifiableList(playerIds);
     }
 
     public List<Card> getPlayerCards(String playerId) {

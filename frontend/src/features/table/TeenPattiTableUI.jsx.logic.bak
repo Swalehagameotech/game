@@ -1,0 +1,729 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Eye, Award, LogOut, ShieldAlert, Sparkles, BookOpen, Trash2,
+  ArrowLeft, Plus, Trophy, Settings, MessageCircle, History, Users, BarChart3,
+} from 'lucide-react';
+import { wsGameService } from '@/shared/api/websocketService';
+import { useAuth } from '@/context/AuthContext';
+import { useGame } from '@/context/GameContext';
+import RulebookModal from './RulebookModal';
+import axiosClient from '@/shared/api/axiosClient';
+import {
+  normalizeGameState,
+  mergeGameState,
+  isActiveHandStatus,
+  getWaitingBannerText,
+} from './tableUtils';
+import { RealTimeEventType } from '@/shared/api/realtimeEvents';
+import stompService from '@/shared/api/stompService';
+
+// Card Helper Function
+const renderCardSymbol = (suit) => {
+  switch (suit) {
+    case 'HEARTS': return { symbol: 'â™¥', color: 'text-rose-500' };
+    case 'DIAMONDS': return { symbol: 'â™¦', color: 'text-rose-500' };
+    case 'SPADES': return { symbol: 'â™ ', color: 'text-slate-900' };
+    case 'CLUBS': return { symbol: 'â™£', color: 'text-slate-900' };
+    default: return { symbol: '?', color: 'text-slate-500' };
+  }
+};
+
+const formatRupee = (paise) => `â‚¹${((paise || 0) / 100).toFixed(2)}`;
+
+const avatarColor = (id = '') => {
+  const palette = ['bg-cyan-600', 'bg-violet-600', 'bg-rose-600', 'bg-emerald-600', 'bg-amber-600', 'bg-blue-600'];
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length];
+};
+
+export default function TeenPattiTableUI({
+  tableId,
+  onLeaveTable,
+  onOpenWallet,
+  onOpenLeaderboard,
+}) {
+  const { user, accessToken } = useAuth();
+  const { gameState, updateGameState } = useGame();
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [showRulebook, setShowRulebook] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [startLoading, setStartLoading] = useState(false);
+  const [startError, setStartError] = useState('');
+  const [wsError, setWsError] = useState('');
+  const [isTableLoading, setIsTableLoading] = useState(true);
+  const [localTurnSeconds, setLocalTurnSeconds] = useState(0);
+  const [gameLog, setGameLog] = useState([]);
+  const [showStandings, setShowStandings] = useState(false);
+
+  const pushLog = (text, tone = 'default') => {
+    if (!text) return;
+    setGameLog((prev) => [...prev.slice(-24), { text, tone, at: Date.now() }]);
+  };
+
+  useEffect(() => {
+    if (!tableId) return;
+
+    let cancelled = false;
+    setIsTableLoading(true);
+
+    const applyTablePayload = (data) => {
+      if (!data || cancelled) return;
+      updateGameState((prev) => mergeGameState(prev, data, user));
+    };
+
+    // REST shell first, then live projection so refresh restores turn/cards/actions.
+    Promise.allSettled([
+      axiosClient.get(`/tables/${tableId}`),
+      axiosClient.get(`/tables/${tableId}/live`),
+    ]).then(([detailResult, liveResult]) => {
+      if (cancelled) return;
+      if (detailResult.status === 'fulfilled') {
+        applyTablePayload(detailResult.value.data?.data || detailResult.value.data);
+      }
+      if (liveResult.status === 'fulfilled') {
+        applyTablePayload(liveResult.value.data?.data || liveResult.value.data);
+      } else if (detailResult.status === 'rejected') {
+        console.error('Error fetching table details:', detailResult.reason);
+      }
+    }).finally(() => {
+      if (!cancelled) setIsTableLoading(false);
+    });
+
+    const handleWsMessage = (message) => {
+      if (message.type === 'GAME_STATE_UPDATE' || message.type === 'STATE_UPDATE') {
+        updateGameState((prev) => mergeGameState(prev, message.payload || message.state, user));
+      }
+      if (message.type === 'ACTION_REJECTED') {
+        setWsError(message.reason || 'Action rejected');
+        setTimeout(() => setWsError(''), 4000);
+      }
+    };
+
+    if (accessToken) {
+      wsGameService.connect(accessToken);
+      const unsub = wsGameService.subscribe(handleWsMessage);
+      const unsubOpen = wsGameService.onOpen(() => {
+        wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+      });
+
+      return () => {
+        cancelled = true;
+        unsub();
+        unsubOpen();
+      };
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tableId, accessToken, user?.id, updateGameState]);
+
+  useEffect(() => {
+    if (!tableId) return undefined;
+
+    const applyCountdownPatch = (payload) => {
+      const seconds = typeof payload === 'number'
+        ? payload
+        : payload?.countdownSeconds ?? payload?.seconds ?? 0;
+      updateGameState((prev) => mergeGameState(prev, {
+        countdownSeconds: seconds,
+        status: seconds > 0 ? 'COUNTDOWN' : (prev?.status === 'COUNTDOWN' ? 'WAITING' : prev?.status),
+      }, user));
+    };
+
+    const handleRealtime = (e) => {
+      const event = e.detail;
+      if (!event?.eventType) return;
+
+      const payload = event.payload;
+      const payloadTableId = typeof payload === 'object' && payload !== null ? payload.tableId : null;
+      const matchesTable =
+        event.destination?.includes(`/tables/${tableId}`)
+        || payloadTableId === tableId
+        || payload === tableId;
+
+      if (!matchesTable) return;
+
+      switch (event.eventType) {
+        case RealTimeEventType.COUNTDOWN_STARTED:
+          applyCountdownPatch(typeof payload === 'number' ? payload : payload?.countdownSeconds ?? 5);
+          break;
+        case RealTimeEventType.COUNTDOWN_TICK:
+          applyCountdownPatch(payload);
+          break;
+        case RealTimeEventType.COUNTDOWN_CANCELLED:
+          applyCountdownPatch(0);
+          break;
+        case RealTimeEventType.DEALER_SELECTED: {
+          const dealerSeat = typeof payload === 'number' ? payload : payload?.dealerSeatIndex;
+          if (dealerSeat != null) {
+            updateGameState((prev) => mergeGameState(prev, { dealerSeatIndex: dealerSeat }, user));
+          }
+          break;
+        }
+        case RealTimeEventType.TURN_STARTED:
+        case RealTimeEventType.TURN_CHANGED: {
+          const turnUserId = typeof payload === 'object' && payload !== null
+            ? (payload.activeUserId || payload.currentTurnUserId || null)
+            : null;
+          if (!turnUserId && typeof payload !== 'object') break;
+          const turnPatch = {
+            tableId,
+            currentTurnPlayerId: turnUserId,
+            currentTurnUserId: turnUserId,
+            activeUserId: turnUserId,
+            activeDisplayName: payload?.activeDisplayName || payload?.displayName,
+            currentTurnSeatIndex: payload?.seatIndex ?? payload?.currentTurnSeatIndex,
+            turnTimeoutSeconds: payload?.durationSeconds ?? payload?.turnTimeoutSeconds,
+            turnSecondsRemaining: payload?.turnSecondsRemaining ?? payload?.durationSeconds,
+            turnDeadlineAt: payload?.turnDeadlineAt,
+            myTurn: Boolean(turnUserId && user?.id && turnUserId === user.id),
+          };
+          if (payload?.dealerSeatIndex != null) turnPatch.dealerSeatIndex = payload.dealerSeatIndex;
+          if (Array.isArray(payload?.activePlayerIds)) turnPatch.activePlayerIds = payload.activePlayerIds;
+          if (Array.isArray(payload?.blindPlayerIds)) turnPatch.blindPlayerIds = payload.blindPlayerIds;
+          if (Array.isArray(payload?.seenPlayerIds)) turnPatch.seenPlayerIds = payload.seenPlayerIds;
+          if (Array.isArray(payload?.packedPlayerIds)) turnPatch.packedPlayerIds = payload.packedPlayerIds;
+          updateGameState((prev) => mergeGameState(prev, turnPatch, user));
+          if (turnPatch.turnSecondsRemaining != null) {
+            setLocalTurnSeconds(turnPatch.turnSecondsRemaining);
+          }
+          break;
+        }
+        case RealTimeEventType.TURN_ENDED:
+          updateGameState((prev) => mergeGameState(prev, {
+            turnSecondsRemaining: 0,
+            turnDeadlineAt: null,
+          }, user));
+          setLocalTurnSeconds(0);
+          break;
+        case RealTimeEventType.BETTING_STATE:
+          if (payload && typeof payload === 'object') {
+            const isMine = !payload.userId || payload.userId === user?.id;
+            updateGameState((prev) => mergeGameState(prev, {
+              potPaise: payload.potPaise,
+              currentBaseStakePaise: payload.currentBaseStakePaise,
+              ...(isMine ? {
+                requiredBetPaise: payload.requiredBetPaise,
+                blindAmountPaise: payload.blindAmountPaise,
+                chaalAmountPaise: payload.chaalAmountPaise,
+                showCostPaise: payload.showCostPaise,
+                sideShowCostPaise: payload.sideShowCostPaise,
+                minRaiseBetPaise: payload.minRaiseBetPaise,
+                raiseOptionsPaise: payload.raiseOptionsPaise,
+                maxBetPaise: payload.maxBetPaise,
+                playerContributedPaise: payload.playerContributedPaise,
+                walletBalancePaise: payload.walletBalancePaise,
+                playerState: payload.playerState,
+                turnTimerSeconds: payload.turnTimerSeconds,
+                blindSeenRatio: payload.blindSeenRatio,
+                myTurn: payload.myTurn,
+                allowedActions: payload.allowedActions,
+              } : {}),
+            }, user));
+          }
+          break;
+        case RealTimeEventType.PLAYER_SEEN_CARDS:
+        case RealTimeEventType.SEEN_PLAYED: {
+          const seenUserId = typeof payload === 'string'
+            ? payload
+            : (payload?.playerId || payload?.userId);
+          if (!seenUserId) break;
+          updateGameState((prev) => {
+            if (!prev) return prev;
+            const players = (prev.players || []).map((p) => (
+              p.userId === seenUserId
+                ? {
+                    ...p,
+                    status: 'SEEN',
+                    // Never invent opponent card values from status events
+                    cards: p.userId === user?.id ? p.cards : [],
+                  }
+                : p
+            ));
+            const seenPlayerIds = [...new Set([...(prev.seenPlayerIds || []), seenUserId])];
+            const blindPlayerIds = (prev.blindPlayerIds || []).filter((id) => id !== seenUserId);
+            return mergeGameState(prev, {
+              players,
+              seenPlayerIds,
+              blindPlayerIds,
+            }, user);
+          });
+          break;
+        }
+        case RealTimeEventType.WINNER_DECLARED:
+          if (payload && typeof payload === 'object') {
+            updateGameState((prev) => mergeGameState(prev, {
+              winnerSnapshot: payload,
+              status: 'ROUND_END',
+              myTurn: false,
+              allowedActions: [],
+            }, user));
+          }
+          break;
+        case RealTimeEventType.SHOW_ENABLED:
+          // Backend signal only â€” buttons come from allowedActions / BETTING_STATE.
+          break;
+        case RealTimeEventType.ROUND_FINISHED: {
+          const seconds = typeof payload === 'number' ? payload : payload?.nextRoundInSeconds ?? 0;
+          updateGameState((prev) => mergeGameState(prev, {
+            status: seconds > 0 ? 'NEXT_ROUND' : 'ROUND_END',
+            countdownSeconds: seconds,
+            nextRoundSeconds: seconds,
+          }, user));
+          break;
+        }
+        case RealTimeEventType.NEXT_ROUND_COUNTDOWN: {
+          const seconds = typeof payload === 'number'
+            ? payload
+            : (payload?.secondsRemaining ?? payload?.countdownSeconds ?? 0);
+          updateGameState((prev) => mergeGameState(prev, {
+            status: 'NEXT_ROUND',
+            countdownSeconds: seconds,
+            nextRoundSeconds: seconds,
+          }, user));
+          break;
+        }
+        case RealTimeEventType.NEXT_ROUND_STARTED:
+        case RealTimeEventType.GAME_STARTED:
+        case RealTimeEventType.GAME_RUNNING:
+          pushLog('Game started', 'system');
+          updateGameState((prev) => {
+            const resetPlayers = (prev?.players || []).map((p) => ({
+              ...p,
+              status: 'BLIND',
+              cards: [],
+              cardCount: 3,
+            }));
+            return mergeGameState(prev, {
+              winnerSnapshot: null,
+              handOutcome: null,
+              countdownSeconds: 0,
+              nextRoundSeconds: 0,
+              status: 'RUNNING',
+              potPaise: typeof payload === 'object' && payload?.potPaise != null
+                ? payload.potPaise
+                : (prev?.bootAmountPaise ? prev.bootAmountPaise * resetPlayers.length : prev?.potPaise),
+              bootAmountPaise: typeof payload === 'object' && payload?.bootPaise != null
+                ? payload.bootPaise
+                : prev?.bootAmountPaise,
+              players: resetPlayers,
+              seenPlayerIds: [],
+              packedPlayerIds: [],
+              blindPlayerIds: resetPlayers.map((p) => p.userId),
+              myTurn: false,
+              allowedActions: [],
+              ...(typeof payload === 'object' && payload !== null ? payload : {}),
+            }, user, { forceResetHands: true });
+          });
+          break;
+        case RealTimeEventType.TABLE_WAITING_FOR_PLAYERS:
+          updateGameState((prev) => mergeGameState(prev, {
+            status: 'WAITING',
+            countdownSeconds: 0,
+            nextRoundSeconds: 0,
+            winnerSnapshot: null,
+          }, user));
+          break;
+        case RealTimeEventType.WALLET_SETTLED:
+          if (payload?.winnerUserId === user?.id && payload?.winnerBalanceAfterPaise != null) {
+            window.dispatchEvent(new CustomEvent('wallet:updated', {
+              detail: { balancePaise: payload.winnerBalanceAfterPaise },
+            }));
+          }
+          break;
+        case RealTimeEventType.TABLE_UPDATED:
+        case RealTimeEventType.TABLE_STATUS_CHANGED: {
+          if (!payload || typeof payload !== 'object') break;
+          // Never merge raw Table entity seats into hand view â€” that wiped SEEN cards.
+          const safePatch = {
+            status: payload.status,
+            countdownSeconds: payload.countdownSeconds,
+            potPaise: payload.potPaise,
+            currentTurnPlayerId: payload.currentTurnPlayerId || payload.currentTurnUserId,
+            currentTurnUserId: payload.currentTurnUserId || payload.currentTurnPlayerId,
+            dealerSeatIndex: payload.dealerSeatIndex,
+          };
+          if (Array.isArray(payload.seenPlayerIds)) safePatch.seenPlayerIds = payload.seenPlayerIds;
+          if (Array.isArray(payload.blindPlayerIds)) safePatch.blindPlayerIds = payload.blindPlayerIds;
+          if (Array.isArray(payload.packedPlayerIds)) safePatch.packedPlayerIds = payload.packedPlayerIds;
+          if (Array.isArray(payload.activePlayerIds)) safePatch.activePlayerIds = payload.activePlayerIds;
+          Object.keys(safePatch).forEach((k) => safePatch[k] === undefined && delete safePatch[k]);
+          if (Object.keys(safePatch).length) {
+            updateGameState((prev) => mergeGameState(prev, safePatch, user));
+          }
+          break;
+        }
+        case RealTimeEventType.SIDE_SHOW_REQUESTED: {
+          const targetId = payload?.targetUserId;
+          const requesterId = payload?.requesterUserId;
+          if (targetId && targetId === user?.id) {
+            setWsError('Side Show requested â€” Accept or Reject');
+            updateGameState((prev) => mergeGameState(prev, {
+              pendingSideShow: { requesterId, targetId },
+              allowedActions: ['SIDE_SHOW_ACCEPT', 'SIDE_SHOW_REJECT'],
+              myTurn: true,
+            }, user));
+          } else if (requesterId === user?.id) {
+            setWsError('Waiting for Side Show responseâ€¦');
+            updateGameState((prev) => mergeGameState(prev, {
+              pendingSideShow: { requesterId, targetId },
+              allowedActions: [],
+              myTurn: false,
+            }, user));
+          }
+          break;
+        }
+        case RealTimeEventType.SIDE_SHOW_ACCEPTED:
+        case RealTimeEventType.SIDE_SHOW_REJECTED:
+          setWsError('');
+          updateGameState((prev) => mergeGameState(prev, {
+            pendingSideShow: null,
+          }, user));
+          wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+          break;
+        case RealTimeEventType.PACK_PLAYED: {
+          const packedId = payload?.userId;
+          if (packedId) {
+            const packedName = packedId === user?.id
+              ? `${user?.displayName || 'You'} (You)`
+              : (payload?.displayName || 'Player');
+            pushLog(`${packedName} Pack`);
+            updateGameState((prev) => {
+              const players = (prev?.players || []).map((p) => (
+                p.userId === packedId ? { ...p, status: 'PACKED' } : p
+              ));
+              const packedPlayerIds = [...new Set([...(prev?.packedPlayerIds || []), packedId])];
+              return mergeGameState(prev, { players, packedPlayerIds }, user);
+            });
+          }
+          break;
+        }
+        case RealTimeEventType.POT_UPDATED: {
+          const pot = typeof payload === 'number' ? payload : payload?.potPaise ?? payload?.potTotal;
+          if (pot != null) {
+            updateGameState((prev) => mergeGameState(prev, { potPaise: pot }, user));
+          }
+          break;
+        }
+        case RealTimeEventType.BET_UPDATED:
+        case RealTimeEventType.CURRENT_BET_UPDATED:
+          if (payload && typeof payload === 'object') {
+            updateGameState((prev) => mergeGameState(prev, {
+              currentBaseStakePaise: payload.currentBaseStakePaise,
+              potPaise: payload.potPaise,
+            }, user));
+          }
+          break;
+        case RealTimeEventType.WALLET_UPDATED:
+          if (typeof payload === 'number') {
+            window.dispatchEvent(new CustomEvent('wallet:updated', {
+              detail: { balancePaise: payload },
+            }));
+            updateGameState((prev) => mergeGameState(prev, { walletBalancePaise: payload }, user));
+          }
+          break;
+        case RealTimeEventType.PLAYER_STATE_UPDATED:
+        case RealTimeEventType.GAME_STATE_UPDATED:
+          if (payload && typeof payload === 'object') {
+            updateGameState((prev) => mergeGameState(prev, payload, user));
+          }
+          break;
+        case RealTimeEventType.ACTION_REJECTED:
+          setWsError(typeof payload === 'string' ? payload : payload?.reason || 'Action rejected');
+          setTimeout(() => setWsError(''), 4000);
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('realtime', handleRealtime);
+    const tableSub = stompService.subscribeTable(tableId);
+
+    return () => {
+      window.removeEventListener('realtime', handleRealtime);
+      tableSub?.unsubscribe?.();
+    };
+  }, [tableId, user, updateGameState]);
+
+  const sendPlayerAction = async (actionType, multiplier = 1) => {
+    if (!tableId || actionLoading) return;
+    setActionLoading(true);
+    setWsError('');
+
+    try {
+      if (actionType === 'SEE_CARDS') {
+        try {
+          const res = await axiosClient.post(`/tables/${tableId}/see-cards`);
+          const data = res.data?.data || res.data;
+          if (data?.cards) {
+            pushLog(`${user?.displayName || 'You'} (You) Seen`);
+            updateGameState((prev) => mergeGameState(prev, {
+              status: prev?.status || 'RUNNING',
+              seenPlayerIds: [...new Set([...(prev?.seenPlayerIds || []), user?.id].filter(Boolean))],
+              blindPlayerIds: (prev?.blindPlayerIds || []).filter((id) => id !== user?.id),
+              players: (prev?.players || []).map((p) => (
+                p.userId === user?.id
+                  ? { ...p, status: 'SEEN', cards: data.cards, cardCount: data.cards.length || 3 }
+                  : p
+              )),
+            }, user));
+          }
+          // Refresh authoritative buttons/amounts after see.
+          try {
+            const betRes = await axiosClient.get(`/tables/${tableId}/betting-state`);
+            const betting = betRes.data?.data || betRes.data;
+            if (betting) {
+              updateGameState((prev) => mergeGameState(prev, {
+                ...betting,
+                myTurn: betting.myTurn,
+                allowedActions: betting.allowedActions,
+              }, user));
+            }
+          } catch { /* ignore */ }
+          wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+          return;
+        } catch (err) {
+          const msg = err.response?.data?.message || err.response?.data?.error || err.message;
+          setWsError(msg || 'See Cards failed');
+          setTimeout(() => setWsError(''), 5000);
+        }
+      }
+
+      const amountPaise = actionType === 'RAISE'
+        ? (Array.isArray(gameState?.raiseOptionsPaise) && gameState.raiseOptionsPaise.length
+            ? gameState.raiseOptionsPaise[0]
+            : (gameState?.minRaiseBetPaise || 0))
+        : 0; // Blind/Chaal/Show/Pack/SideShow amounts are server-authoritative
+
+      const restActionType = (actionType === 'BLIND') ? 'PLAY_BLIND' : actionType;
+
+      // Prefer REST so Blind/Chaal/Raise/Show work even if WS action path fails.
+      try {
+        const res = await axiosClient.post(`/tables/${tableId}/actions`, {
+          actionType: restActionType,
+          amountPaise,
+        });
+        const betting = res.data?.data || res.data;
+        if (betting && typeof betting === 'object') {
+          const actionLabel = restActionType === 'PLAY_BLIND' || restActionType === 'BLIND'
+            ? 'Blind'
+            : restActionType === 'CHAAL' ? 'Chaal'
+            : restActionType === 'RAISE' ? 'Raise'
+            : restActionType === 'SHOW' ? 'Show'
+            : restActionType === 'PACK' ? 'Pack'
+            : restActionType;
+          if (actionLabel !== 'PACK') {
+            const amt = betting.requiredBetPaise || betting.blindAmountPaise || betting.chaalAmountPaise;
+            pushLog(`${user?.displayName || 'You'} (You) ${actionLabel} ${formatRupee(amt)}`);
+          }
+          updateGameState((prev) => mergeGameState(prev, {
+            potPaise: betting.potPaise ?? prev?.potPaise,
+            currentBaseStakePaise: betting.currentBaseStakePaise ?? prev?.currentBaseStakePaise,
+            requiredBetPaise: betting.requiredBetPaise,
+            blindAmountPaise: betting.blindAmountPaise,
+            chaalAmountPaise: betting.chaalAmountPaise,
+            showCostPaise: betting.showCostPaise,
+            sideShowCostPaise: betting.sideShowCostPaise,
+            minRaiseBetPaise: betting.minRaiseBetPaise,
+            raiseOptionsPaise: betting.raiseOptionsPaise,
+            walletBalancePaise: betting.walletBalancePaise,
+            playerState: betting.playerState,
+            myTurn: betting.myTurn,
+            allowedActions: betting.allowedActions || [],
+            players: (prev?.players || []).map((p) => (
+              p.userId === user?.id && betting.playerState
+                ? { ...p, status: betting.playerState }
+                : p
+            )),
+          }, user));
+          if (betting.walletBalancePaise != null) {
+            window.dispatchEvent(new CustomEvent('wallet:updated', {
+              detail: { balancePaise: betting.walletBalancePaise },
+            }));
+          }
+        }
+        wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+        return;
+      } catch (err) {
+        const msg = err.response?.data?.message || err.response?.data?.error || err.message;
+        console.warn('REST action failed, trying WS:', msg);
+        // Show friendly â‚¹ amounts when balance is insufficient
+        const friendly = typeof msg === 'string'
+          ? msg.replace(/(\d+)\s*paise/gi, (_, p) => `â‚¹${(Number(p) / 100).toFixed(0)}`)
+          : msg;
+        setWsError(friendly || 'Action failed');
+        setTimeout(() => setWsError(''), 6000);
+        // Don't fall through to WS for balance errors â€” it will fail the same way
+        if (String(msg || '').toLowerCase().includes('insufficient')) {
+          return;
+        }
+      }
+
+      const sent = wsGameService.sendMessage(restActionType, tableId, {
+        amountPaise,
+      });
+      if (!sent) {
+        setWsError('Not connected â€” reconnectingâ€¦');
+        if (accessToken) wsGameService.connect(accessToken);
+      }
+    } finally {
+      setTimeout(() => setActionLoading(false), 400);
+    }
+  };
+
+  const handleConfirmLeave = async () => {
+    try {
+      await axiosClient.post(`/tables/${tableId}/leave`);
+      wsGameService.sendMessage('LEAVE_TABLE', tableId, {});
+    } catch (err) {
+      console.error('Leave table error:', err);
+    } finally {
+      onLeaveTable();
+    }
+  };
+
+  const seatedIds = gameState?.seatedPlayerIds || gameState?.seatedPlayers?.map((p) => p.userId) || [];
+  const rawPlayers = gameState?.players || [];
+  const players = rawPlayers.length > 0
+    ? rawPlayers
+    : seatedIds.map((id, index) => ({
+        userId: id,
+        displayName: id === user?.id ? (user?.displayName || 'You') : `Player ${index + 1}`,
+        status: 'BLIND',
+        cards: [],
+        cardCount: 0,
+      }));
+
+  const status = gameState?.status;
+  const minPlayers = gameState?.minPlayers ?? 3;
+  const maxPlayers = gameState?.maxPlayers ?? 6;
+  const hostId = gameState?.hostId;
+  const tableType = gameState?.tableType;
+  const isPrivateTable = tableType === 'PRIVATE';
+  const countdownSeconds = gameState?.countdownSeconds ?? 0;
+  const isHost = Boolean(hostId && user?.id === hostId);
+  const canStart = !isTableLoading
+    && status
+    && (status === 'WAITING' || status === 'ROUND_END')
+    && players.length >= minPlayers;
+
+  const handleStartGame = async () => {
+    if (!isPrivateTable || !isHost || !canStart || startLoading) return;
+    setStartLoading(true);
+    setStartError('');
+    try {
+      const res = await axiosClient.post(`/tables/${tableId}/start`);
+      const data = res.data?.data || res.data;
+      if (data) {
+        updateGameState(normalizeGameState(data, user));
+      }
+      wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+    } catch (err) {
+      const msg = err.response?.data?.message || err.response?.data?.error || 'Failed to start game';
+      setStartError(msg);
+    } finally {
+      setStartLoading(false);
+    }
+  };
+
+  const currentTurnUserId = gameState?.currentTurnPlayerId;
+  const allowedActions = gameState?.allowedActions || [];
+  const isMyTurn = Boolean(currentTurnUserId && user?.id && currentTurnUserId === user.id);
+  const myPlayer = players.find((p) => p.userId === user?.id);
+  const myStatus = myPlayer?.status || 'BLIND';
+  const potRupees = (gameState?.potPaise || 0) / 100;
+  const requiredBetRupees = (gameState?.requiredBetPaise || 0) / 100;
+  const blindBetRupees = (gameState?.blindAmountPaise || 0) / 100;
+  const chaalBetRupees = (gameState?.chaalAmountPaise || 0) / 100;
+  const minRaiseBetRupees = (gameState?.minRaiseBetPaise || 0) / 100;
+  const baseStakeRupees = (gameState?.currentBaseStakePaise || 0) / 100;
+  const handOutcome = gameState?.handOutcome;
+  const winnerSnapshot = gameState?.winnerSnapshot;
+  const winnerDisplayName = winnerSnapshot?.winnerDisplayName
+    || (handOutcome?.winnerId === user?.id ? (user?.displayName || 'You') : null);
+  const winnerPayoutRupees = ((winnerSnapshot?.payoutPaise ?? handOutcome?.winnerPayoutPaise) || 0) / 100;
+  const winningCategoryLabel = winnerSnapshot?.winningHandDescription
+    || winnerSnapshot?.winningCategory
+    || handOutcome?.winningCategory
+    || 'FOLD WIN';
+  // Status drives "hand over" â€” do not treat a stale winnerSnapshot as game-over while RUNNING.
+  const handEnded = status === 'ROUND_END' || status === 'WAITING' || status === 'NEXT_ROUND' || status === 'CLOSED';
+  const handInProgress = isActiveHandStatus(status);
+  const showWinnerBanner = Boolean((winnerSnapshot || handOutcome) && handEnded);
+  const turnPlayer = players.find((p) => p.userId === currentTurnUserId);
+  const turnPlayerName = gameState?.activeDisplayName
+    || turnPlayer?.displayName
+    || (currentTurnUserId === user?.id ? (user?.displayName || 'You') : null)
+    || (currentTurnUserId ? `Player` : null);
+  const canAct = (action) => {
+    if (!handInProgress) return false;
+    return allowedActions.includes(action);
+  };
+  const turnDisplaySeconds = localTurnSeconds || gameState?.turnSecondsRemaining || 0;
+  const dealerSeatIndex = gameState?.dealerSeatIndex ?? -1;
+
+  useEffect(() => {
+    const deadline = gameState?.turnDeadlineAt;
+    if (!deadline || !handInProgress) {
+      setLocalTurnSeconds(gameState?.turnSecondsRemaining ?? 0);
+      return undefined;
+    }
+
+    const computeRemaining = () => {
+      const ms = new Date(deadline).getTime() - Date.now();
+      return Math.max(0, Math.ceil(ms / 1000));
+    };
+
+    setLocalTurnSeconds(computeRemaining());
+    const interval = setInterval(() => {
+      setLocalTurnSeconds(computeRemaining());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState?.turnDeadlineAt, gameState?.turnSecondsRemaining, handInProgress]);
+
+  const statusBannerText = isTableLoading
+    ? 'Loading tableâ€¦'
+    : getWaitingBannerText({
+        status: status || 'WAITING',
+        playerCount: players.length,
+        minPlayers,
+        maxPlayers,
+        isHost,
+        canStart,
+        tableType,
+        countdownSeconds,
+      });
+
+  const walletBalancePaise = gameState?.walletBalancePaise ?? user?.walletBalance ?? user?.balancePaise ?? 0;
+  const bootRupees = (gameState?.bootAmountPaise || 0) / 100;
+  const showCostRupees = (gameState?.showCostPaise || gameState?.chaalAmountPaise || 0) / 100;
+  const sideShowCostRupees = (gameState?.sideShowCostPaise || gameState?.chaalAmountPaise || 0) / 100;
+  const activeCount = players.filter((p) => p.status !== 'PACKED').length;
+  const turnTotal = gameState?.turnTimeoutSeconds || gameState?.turnTimerSeconds || 20;
+  const turnRingPct = turnTotal > 0 ? Math.min(100, (turnDisplaySeconds / turnTotal) * 100) : 0;
+  const tableIdDisplay = gameState?.inviteCode || tableId?.slice(-6) || tableId;
+  const seatPlayers = (() => {
+    const list = [...players];
+    const mi = list.findIndex((p) => p.userId === user?.id);
+    if (mi > 0) {
+      const [me] = list.splice(mi, 1);
+      list.unshift(me);
+    }
+    return list;
+  })();
+  const isPacked = myStatus === 'PACKED';
+
+  const seatPositions = [
+    'bottom-[-48px] left-1/2 -translate-x-1/2',
+    'bottom-[72px] left-[-12px] xl:left-[-40px]',
+    'top-[72px] left-[-12px] xl:left-[-40px]',
+    'top-[-48px] left-1/2 -translate-x-1/2',
+    'top-[72px] right-[-12px] xl:right-[-40px]',
+    'bottom-[72px] right-[-12px] xl:right-[-40px]',
+  ];
+

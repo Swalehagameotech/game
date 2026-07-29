@@ -5,6 +5,7 @@ import com.teenpatti.platform.game.engine.HandContextManager;
 import com.teenpatti.platform.game.engine.PlayerStatus;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
+import com.teenpatti.platform.user.UserRepository;
 import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,6 +33,7 @@ public class TurnManagementService {
     private final TableRepository tableRepository;
     private final HandContextManager handContextManager;
     private final WebSocketEventPublisher eventPublisher;
+    private final UserRepository userRepository;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
     private final ConcurrentHashMap<String, ScheduledFuture<?>> activeTurnTimers = new ConcurrentHashMap<>();
@@ -43,10 +45,12 @@ public class TurnManagementService {
     public TurnManagementService(
             TableRepository tableRepository,
             HandContextManager handContextManager,
-            WebSocketEventPublisher eventPublisher) {
+            WebSocketEventPublisher eventPublisher,
+            UserRepository userRepository) {
         this.tableRepository = tableRepository;
         this.handContextManager = handContextManager;
         this.eventPublisher = eventPublisher;
+        this.userRepository = userRepository;
     }
 
     public int getTurnTimeoutSeconds() {
@@ -95,6 +99,10 @@ public class TurnManagementService {
         Instant deadline = table.getId() != null ? turnDeadlines.get(table.getId()) : null;
         int secondsRemaining = computeSecondsRemaining(deadline);
 
+        int effectiveTurnTimeoutSeconds = table.getTurnTimeoutSeconds() > 0
+                ? table.getTurnTimeoutSeconds()
+                : turnTimeoutSeconds;
+
         return TurnState.builder()
                 .tableId(table.getId())
                 .currentTurnUserId(turnUserId)
@@ -102,7 +110,7 @@ public class TurnManagementService {
                 .dealerSeatIndex(dealerSeat)
                 .potPaise(engine != null ? engine.getPotPaise() : table.getPotPaise())
                 .currentBaseStakePaise(engine != null ? engine.getCurrentBaseStakePaise() : table.getCurrentStakePaise())
-                .turnTimeoutSeconds(turnTimeoutSeconds)
+                .turnTimeoutSeconds(effectiveTurnTimeoutSeconds)
                 .turnSecondsRemaining(secondsRemaining)
                 .turnDeadlineAt(deadline)
                 .activePlayerIds(engine != null
@@ -123,14 +131,17 @@ public class TurnManagementService {
     public void beginTurn(String tableId, String userId, int seatIndex, Runnable onTimeout) {
         cancelTurn(tableId);
 
-        Instant deadline = Instant.now().plusSeconds(turnTimeoutSeconds);
-        turnDeadlines.put(tableId, deadline);
-
         Optional<Table> tableOpt = tableRepository.findById(tableId);
         if (tableOpt.isEmpty()) {
             return;
         }
         Table table = tableOpt.get();
+        int effectiveTurnTimeoutSeconds = table.getTurnTimeoutSeconds() > 0
+                ? table.getTurnTimeoutSeconds()
+                : turnTimeoutSeconds;
+
+        Instant deadline = Instant.now().plusSeconds(effectiveTurnTimeoutSeconds);
+        turnDeadlines.put(tableId, deadline);
         table.setCurrentTurnUserId(userId);
         table.setUpdatedAt(Instant.now());
         tableRepository.save(table);
@@ -139,18 +150,22 @@ public class TurnManagementService {
         TurnState turnState = buildTurnState(table, engine);
 
         log.info("Turn started for user [{}] at seat [{}] on table [{}], deadline in {}s",
-                userId, seatIndex, tableId, turnTimeoutSeconds);
+                userId, seatIndex, tableId, effectiveTurnTimeoutSeconds);
 
-        eventPublisher.publishTurnStarted(tableId, userId, seatIndex, turnTimeoutSeconds);
+        String displayName = userRepository.findById(userId)
+                .map(u -> u.getDisplayName() != null ? u.getDisplayName() : "Player")
+                .orElse("Player");
+        eventPublisher.publishTurnStarted(tableId, userId, displayName, seatIndex, effectiveTurnTimeoutSeconds);
         eventPublisher.publishTurnState(tableId, turnState);
-        eventPublisher.publishTableUpdated(tableId, table);
+        // Do NOT publish full TABLE_UPDATED here — clients treat it as a shell seat list and
+        // were wiping SEEN card values. Turn + STATE_UPDATE carry the live view.
 
         ScheduledFuture<?> timerTask = scheduler.schedule(() -> {
             log.warn("Turn timeout for user [{}] on table [{}]", userId, tableId);
             if (onTimeout != null) {
                 onTimeout.run();
             }
-        }, turnTimeoutSeconds, TimeUnit.SECONDS);
+        }, effectiveTurnTimeoutSeconds, TimeUnit.SECONDS);
 
         activeTurnTimers.put(tableId, timerTask);
     }

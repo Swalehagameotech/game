@@ -17,7 +17,8 @@ import java.security.SecureRandom;
 public class InviteCodeGenerator {
 
     private static final String ALPHANUMERIC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Excludes ambiguous 'I', 'O', '0', '1'
-    private static final int CODE_LENGTH = 7;
+    // UI and product copy expect a 6-character invite code.
+    private static final int CODE_LENGTH = 6;
     private static final int MAX_COLLISION_RETRIES = 10;
     private final SecureRandom random = new SecureRandom();
 

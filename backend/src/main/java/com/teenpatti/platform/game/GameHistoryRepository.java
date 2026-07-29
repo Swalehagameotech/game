@@ -17,4 +17,8 @@ public interface GameHistoryRepository extends MongoRepository<GameHistory, Stri
     Page<GameHistory> findByWinnerIdOrderByEndedAtDesc(String winnerId, Pageable pageable);
 
     Page<GameHistory> findByPlayerIdsContainingOrderByEndedAtDesc(String userId, Pageable pageable);
+
+    long countByWinnerId(String winnerId);
+
+    long countByPlayerIdsContaining(String userId);
 }

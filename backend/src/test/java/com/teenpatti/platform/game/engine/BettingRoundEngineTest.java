@@ -103,7 +103,7 @@ class BettingRoundEngineTest {
     }
 
     @Test
-    @DisplayName("SHOW is rejected when more than 2 players are active")
+    @DisplayName("SHOW is rejected when more than two active players remain")
     void applyAction_ShowWithThreePlayers_ThrowsShowRequiresExactlyTwoPlayers() {
         Deck deck = new Deck();
         engine.startHand(players, deck);
@@ -112,6 +112,24 @@ class BettingRoundEngineTest {
                 engine.applyAction(PlayerAction.of("player1", PlayerActionType.SHOW, 1000L)));
 
         assertEquals(ActionRejectionReason.SHOW_REQUIRES_EXACTLY_TWO_PLAYERS, ex.getReason());
+    }
+
+    @Test
+    @DisplayName("SHOW is allowed for BLIND player when exactly two active remain")
+    void applyAction_ShowWhileBlind_WithTwoPlayers_Resolves() {
+        Deck deck = new Deck();
+        engine.startHand(players, deck);
+        engine.applyAction(PlayerAction.of("player1", PlayerActionType.PACK));
+
+        assertEquals(2, engine.getActivePlayerIds().size());
+        assertEquals(PlayerStatus.BLIND, engine.getPlayerStatus("player2"));
+
+        engine.applyAction(PlayerAction.of("player2", PlayerActionType.SHOW, 2000L));
+        engine.resolveShowdownAfterShowAccept();
+
+        assertTrue(engine.isHandFinished());
+        assertNotNull(engine.getOutcome());
+        assertNotNull(engine.getOutcome().getWinnerId());
     }
 
     @Test
@@ -145,7 +163,8 @@ class BettingRoundEngineTest {
         engine.applyAction(PlayerAction.of("p1", PlayerActionType.PLAY_BLIND, 1000L));
         // Turn 2: p2 sees cards, then calls SHOW with 2000 paise
         engine.applyAction(PlayerAction.of("p2", PlayerActionType.SEE_CARDS));
-        engine.applyAction(PlayerAction.of("p2", PlayerActionType.SHOW, 2000L));
+        engine.recordShowRequest("p2", 2000L);
+        engine.resolveShowdownAfterShowAccept();
 
         assertTrue(engine.isHandFinished());
         HandOutcome outcome = engine.getOutcome();
@@ -177,11 +196,12 @@ class BettingRoundEngineTest {
         engine.applyAction(PlayerAction.of("player3", PlayerActionType.PACK));
 
         // Round 2 (active: player1, player2):
-        // Player 1 (blind, required = 2000) chaals -> Pot = 10000
-        engine.applyAction(PlayerAction.of("player1", PlayerActionType.CHAAL, 2000L));
+        // Player 1 (blind) plays blind at raised base stake 2000 -> Pot = 10000
+        engine.applyAction(PlayerAction.of("player1", PlayerActionType.PLAY_BLIND, 2000L));
 
         // Player 2 (seen, required = 4000) requests SHOW -> Pot = 14000
         engine.applyAction(PlayerAction.of("player2", PlayerActionType.SHOW, 4000L));
+        engine.resolveShowdownAfterShowAccept();
 
         assertTrue(engine.isHandFinished());
         HandOutcome outcome = engine.getOutcome();

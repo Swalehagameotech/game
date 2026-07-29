@@ -15,13 +15,21 @@ public class BettingState {
 
     String tableId;
     String userId;
+    String playerState; // BLIND | SEEN | PACKED
     long potPaise;
     long currentBaseStakePaise;
+    long blindAmountPaise;
+    long chaalAmountPaise;
+    long showCostPaise;
+    long sideShowCostPaise;
     long requiredBetPaise;
     long minRaiseBetPaise;
     long maxBetPaise;
+    List<Long> raiseOptionsPaise;
     long playerContributedPaise;
+    long walletBalancePaise;
     int blindSeenRatio;
+    int turnTimerSeconds;
     boolean myTurn;
     List<String> allowedActions;
 }

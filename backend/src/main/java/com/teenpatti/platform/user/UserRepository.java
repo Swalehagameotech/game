@@ -30,6 +30,6 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     Page<User> findByKycStatus(KycStatus kycStatus, Pageable pageable);
 
-    @Query("{ '$or': [ { 'email': { '$regex': ?0, '$options': 'i' } }, { 'displayName': { '$regex': ?0, '$options': 'i' } } ] }")
-    Page<User> searchByEmailOrDisplayName(String query, Pageable pageable);
+    @Query("{ '$or': [ { 'email': { '$regex': ?0, '$options': 'i' } }, { 'displayName': { '$regex': ?0, '$options': 'i' } }, { 'phoneNumber': { '$regex': ?0, '$options': 'i' } } ] }")
+    Page<User> searchByEmailOrDisplayNameOrPhoneNumber(String query, Pageable pageable);
 }

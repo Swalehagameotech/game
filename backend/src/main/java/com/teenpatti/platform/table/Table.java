@@ -101,7 +101,10 @@ public class Table {
     private long currentStakePaise = 1000L;
 
     @Builder.Default
-    private int roundNumber = 1;
+    private int turnTimeoutSeconds = 20;
+
+    @Builder.Default
+    private int roundNumber = 0;
 
     private String lastAction;
 
@@ -117,9 +120,21 @@ public class Table {
     @Builder.Default
     private List<String> blindPlayerIds = new ArrayList<>();
 
+    /**
+     * Seated players who lost WebSocket connection but are still in grace period (not removed).
+     */
+    @Builder.Default
+    private List<String> disconnectedPlayerIds = new ArrayList<>();
+
     private String winnerUserId;
 
     private String currentHandId;
+
+    /**
+     * Accumulated winner for each completed round at this table.
+     */
+    @Builder.Default
+    private java.util.List<TableRoundResult> roundResults = new ArrayList<>();
 
     @Builder.Default
     private TableStatus status = TableStatus.WAITING;

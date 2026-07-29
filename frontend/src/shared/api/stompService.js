@@ -10,6 +10,7 @@ class StompRealtimeService {
     this.client = null;
     this.listeners = new Set();
     this.subscriptions = [];
+    this.tableIds = new Set();
     this.connected = false;
     this.userId = null;
     this.token = null;
@@ -46,6 +47,9 @@ class StompRealtimeService {
       onConnect: () => {
         this.connected = true;
         this.subscribeDefaults(userId);
+        this.tableIds.forEach((tableId) => {
+          this.subscribeDestination(StompDestinations.topicTable(tableId));
+        });
         this.listeners.forEach((fn) => fn({ eventType: 'STOMP_CONNECTED', payload: null }));
       },
       onDisconnect: () => {
@@ -72,6 +76,7 @@ class StompRealtimeService {
     if (userId) {
       this.subscribeDestination(StompDestinations.queueWallet(userId));
       this.subscribeDestination(StompDestinations.queueNotifications(userId));
+      this.subscribeDestination(StompDestinations.queueGame(userId));
     }
   }
 
@@ -99,7 +104,14 @@ class StompRealtimeService {
 
   subscribeTable(tableId) {
     if (!tableId) return null;
-    return this.subscribeDestination(StompDestinations.topicTable(tableId));
+    this.tableIds.add(tableId);
+    const sub = this.subscribeDestination(StompDestinations.topicTable(tableId));
+    return {
+      unsubscribe: () => {
+        this.tableIds.delete(tableId);
+        try { sub?.unsubscribe?.(); } catch { /* ignore */ }
+      },
+    };
   }
 
   /** Register a local listener for all STOMP events. Returns unsubscribe fn. */
@@ -126,6 +138,7 @@ class StompRealtimeService {
 
   disconnect() {
     this.clearSubscriptions();
+    this.tableIds.clear();
     this.connected = false;
     this.userId = null;
     this.token = null;

@@ -35,9 +35,11 @@ export const AuthProvider = ({ children }) => {
     }
   }, [accessToken]);
 
-  // Auto-create demo player session on first visit if not logged in
+  // Optional demo mode: auto-create a guest player on first visit.
+  // Disabled by default to prevent unwanted account creation in real usage.
   useEffect(() => {
-    if (!accessToken) {
+    const autoGuestEnabled = String(import.meta.env.VITE_ENABLE_AUTO_GUEST_LOGIN || '').toLowerCase() === 'true';
+    if (!accessToken && autoGuestEnabled) {
       const autoGuestLogin = async () => {
         try {
           const rand = Math.floor(100000 + Math.random() * 900000);
@@ -87,7 +89,7 @@ export const AuthProvider = ({ children }) => {
 
       autoGuestLogin();
     }
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => {
     const handleAuthExpired = () => {

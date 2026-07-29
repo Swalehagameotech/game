@@ -91,8 +91,22 @@ public class UserService {
     }
 
     public UserProfileResponse recordHeartbeat(String userId) {
-        userPresenceService.markOnline(userId);
-        return getUserProfile(userId);
+        try {
+            userPresenceService.markOnline(userId);
+        } catch (Exception ex) {
+            log.warn("Heartbeat presence update failed for [{}]: {}", userId, ex.getMessage());
+        }
+        try {
+            return getUserProfile(userId);
+        } catch (Exception ex) {
+            log.warn("Heartbeat profile build failed for [{}]: {}", userId, ex.getMessage());
+            // Never 500 the client for presence polling — return a minimal profile shell.
+            User user = userRepository.findById(userId).orElse(null);
+            if (user == null) {
+                throw ex;
+            }
+            return UserMapper.toUserProfileResponse(user, user.getWalletBalance(), null);
+        }
     }
 
     public void markOffline(String userId) {

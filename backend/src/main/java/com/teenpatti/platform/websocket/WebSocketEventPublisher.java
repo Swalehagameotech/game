@@ -79,6 +79,11 @@ public class WebSocketEventPublisher {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.PLAYER_COUNT_CHANGED.name(), currentCount);
     }
 
+    public void publishHostChanged(String tableId, Object payload) {
+        publishEvent(StompDestinations.TOPIC_TABLES, RealTimeEventType.HOST_CHANGED.name(), payload);
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.HOST_CHANGED.name(), payload);
+    }
+
     public void publishUserStatusChanged(String userId, boolean isOnline) {
         publishEvent(StompDestinations.TOPIC_USERS,
                 isOnline ? RealTimeEventType.USER_ONLINE.name() : RealTimeEventType.USER_OFFLINE.name(),
@@ -128,6 +133,11 @@ public class WebSocketEventPublisher {
         publishEvent(StompDestinations.TOPIC_ANNOUNCEMENTS, RealTimeEventType.SYSTEM_ANNOUNCEMENT.name(), payload);
     }
 
+    public void publishBettingConfigurationUpdated(Object payload) {
+        publishEvent(StompDestinations.TOPIC_ADMIN, RealTimeEventType.BETTING_CONFIGURATION_UPDATED.name(), payload);
+        publishEvent(StompDestinations.TOPIC_TABLES, RealTimeEventType.BETTING_CONFIGURATION_UPDATED.name(), payload);
+    }
+
     public void publishGameStarted(String tableId, Object payload) {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.GAME_STARTED.name(), payload);
     }
@@ -141,11 +151,22 @@ public class WebSocketEventPublisher {
     }
 
     public void publishTurnStarted(String tableId, String activeUserId, int seatIndex, int durationSeconds) {
-        Map<String, Object> payload = Map.of(
-                "activeUserId", activeUserId,
-                "seatIndex", seatIndex,
-                "durationSeconds", durationSeconds
-        );
+        publishTurnStarted(tableId, activeUserId, null, seatIndex, durationSeconds);
+    }
+
+    public void publishTurnStarted(
+            String tableId,
+            String activeUserId,
+            String activeDisplayName,
+            int seatIndex,
+            int durationSeconds) {
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("tableId", tableId);
+        payload.put("activeUserId", activeUserId);
+        payload.put("currentTurnUserId", activeUserId);
+        payload.put("activeDisplayName", activeDisplayName != null ? activeDisplayName : "Player");
+        payload.put("seatIndex", seatIndex);
+        payload.put("durationSeconds", durationSeconds);
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.TURN_STARTED.name(), payload);
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.TURN_CHANGED.name(), payload);
     }
@@ -177,6 +198,20 @@ public class WebSocketEventPublisher {
 
     public void publishSeenPlayed(String tableId, String userId) {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SEEN_PLAYED.name(), userId);
+    }
+
+    /**
+     * Public announcement that a player is now SEEN. Must never include card ranks/suits.
+     */
+    public void publishPlayerSeenCards(String tableId, String userId, String displayName) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.PLAYER_SEEN_CARDS.name(), Map.of(
+                "tableId", tableId,
+                "playerId", userId,
+                "userId", userId,
+                "playerName", displayName != null ? displayName : "Player",
+                "displayName", displayName != null ? displayName : "Player",
+                "status", "SEEN"
+        ));
     }
 
     public void publishRaisePlayed(String tableId, String userId, long amountPaise, long potTotal) {
@@ -218,6 +253,24 @@ public class WebSocketEventPublisher {
 
     public void publishShowRequested(String tableId, Object payload) {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SHOW_REQUESTED.name(), payload);
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SHOW_REQUEST.name(), payload);
+    }
+
+    public void publishShowRequestToPlayer(String targetUserId, Object payload) {
+        publishEvent(StompDestinations.queueGame(targetUserId), RealTimeEventType.SHOW_REQUEST.name(), payload);
+        publishEvent(StompDestinations.queueGame(targetUserId), RealTimeEventType.SHOW_REQUESTED.name(), payload);
+    }
+
+    public void publishPlayerCardsRevealedToSelf(String userId, Object payload) {
+        publishEvent(StompDestinations.queueGame(userId), RealTimeEventType.PLAYER_CARDS_REVEALED_TO_SELF.name(), payload);
+    }
+
+    public void publishShowAccepted(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SHOW_ACCEPTED.name(), payload);
+    }
+
+    public void publishFinalHandsRevealed(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.FINAL_HANDS_REVEALED.name(), payload);
     }
 
     public void publishWinnerDeclared(String tableId, Object payload) {
@@ -228,8 +281,26 @@ public class WebSocketEventPublisher {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.POT_UPDATED.name(), potTotalPaise);
     }
 
+    public void publishBetUpdated(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.BET_UPDATED.name(), payload);
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.CURRENT_BET_UPDATED.name(), payload);
+    }
+
+    public void publishPlayerStateUpdated(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.PLAYER_STATE_UPDATED.name(), payload);
+    }
+
+    public void publishGameStateUpdated(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.GAME_STATE_UPDATED.name(), payload);
+    }
+
     public void publishBettingState(String tableId, Object bettingState) {
+        // Shared pot/stake fields for the table (myTurn filtered client-side by userId).
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.BETTING_STATE.name(), bettingState);
+    }
+
+    public void publishPrivateBettingState(String userId, Object bettingState) {
+        publishEvent(StompDestinations.queueGame(userId), RealTimeEventType.BETTING_STATE.name(), bettingState);
     }
 
     public void publishWalletSettled(String tableId, Object settlementResult) {

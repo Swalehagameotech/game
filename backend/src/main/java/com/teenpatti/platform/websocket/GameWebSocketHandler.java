@@ -16,6 +16,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * WebSocket handler for real-time Teen Patti actions. Game start is REST-only (host).
@@ -24,6 +25,11 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class GameWebSocketHandler extends TextWebSocketHandler {
+
+    private static final Set<String> ALLOWED_WS_ACTIONS = Set.of(
+            "PLAY_BLIND", "BLIND", "SEE_CARDS", "CHAAL", "CALL", "RAISE", "PACK", "SHOW",
+            "SHOW_ACCEPT", "SIDE_SHOW_REQUEST", "SIDE_SHOW_ACCEPT", "SIDE_SHOW_REJECT"
+    );
 
     private final ObjectMapper objectMapper;
     private final SessionRegistry sessionRegistry;
@@ -39,10 +45,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         String userId = (String) session.getAttributes().get("userId");
         if (userId != null) {
             sessionRegistry.registerUserSession(userId, session);
-            boolean reconnected = disconnectGracePeriodManager.handleReconnect(userId);
+            String tableId = sessionRegistry.getTableIdForUser(userId);
+            boolean reconnected = disconnectGracePeriodManager.handleReconnect(userId, tableId);
             if (reconnected) {
                 log.info("User [{}] reconnected to WebSocket session.", userId);
-                String tableId = sessionRegistry.getTableIdForUser(userId);
                 if (tableId != null) {
                     gameBroadcastService.broadcastTableState(tableId);
                 }
@@ -109,9 +115,10 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             }
 
             sessionRegistry.attachUserToTable(userId, tableId);
-            disconnectGracePeriodManager.handleReconnect(userId);
+            disconnectGracePeriodManager.handleReconnect(userId, tableId);
 
-            // No auto-start — host starts via REST; send current state only
+            // Rehydrate mid-hand engine after restart, then send personalized projection.
+            gameEngineService.ensureActiveEngine(tableId);
             gameBroadcastService.deliverPrivateHand(tableId, userId);
         });
     }
@@ -131,13 +138,17 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             }
 
             if (handContextManager.getEngine(tableId).isEmpty()) {
+                // JVM may have restarted mid-hand — rebuild engine from durable game_sessions.
+                gameEngineService.ensureActiveEngine(tableId);
+            }
+
+            if (handContextManager.getEngine(tableId).isEmpty()) {
                 sendMessageToSession(session, GameServerMessage.actionRejected("No active hand — waiting for host to start"));
                 return;
             }
 
-            try {
-                com.teenpatti.platform.game.engine.PlayerActionType.valueOf(msg.getType().toUpperCase());
-            } catch (Exception e) {
+            String normalizedType = msg.getType() != null ? msg.getType().toUpperCase() : "";
+            if (!ALLOWED_WS_ACTIONS.contains(normalizedType)) {
                 sendMessageToSession(session, GameServerMessage.error("Invalid action type: " + msg.getType()));
                 return;
             }

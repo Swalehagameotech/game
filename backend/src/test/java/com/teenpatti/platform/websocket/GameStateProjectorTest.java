@@ -43,8 +43,11 @@ class GameStateProjectorTest {
         turnManagementService = Mockito.mock(TurnManagementService.class);
         bettingLogicService = Mockito.mock(BettingLogicService.class);
         winnerCalculationService = Mockito.mock(WinnerCalculationService.class);
+        var handContextManager = Mockito.mock(com.teenpatti.platform.game.engine.HandContextManager.class);
+        Mockito.when(handContextManager.getPendingShow(any())).thenReturn(java.util.Optional.empty());
         projector = new GameStateProjector(
-                userRepository, sessionRegistry, turnManagementService, bettingLogicService, winnerCalculationService);
+                userRepository, sessionRegistry, turnManagementService, bettingLogicService,
+                winnerCalculationService, handContextManager);
 
         Mockito.when(userRepository.findAllById(anyList())).thenReturn(List.of(
                 User.builder().id("p1").displayName("PlayerOne").build(),
@@ -177,6 +180,7 @@ class GameStateProjectorTest {
 
         // p1 requests SHOW against p2
         engine.applyAction(PlayerAction.of("p1", PlayerActionType.SHOW, 2000L));
+        engine.resolveShowdownAfterShowAccept();
 
         assertTrue(engine.isHandFinished());
 

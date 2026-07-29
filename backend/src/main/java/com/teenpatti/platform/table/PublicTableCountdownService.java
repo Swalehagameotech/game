@@ -99,8 +99,10 @@ public class PublicTableCountdownService {
 
     @EventListener
     public void onTableRoundEnded(TableRoundEndedEvent event) {
+        // Next-round auto-start is owned by RoundManagementService.
+        // Public first-join countdown still uses evaluate() via afterPublicTableMutation.
         if (event != null && event.tableId() != null) {
-            evaluate(event.tableId());
+            log.debug("TableRoundEndedEvent received for [{}] — round management owns next-round flow", event.tableId());
         }
     }
 

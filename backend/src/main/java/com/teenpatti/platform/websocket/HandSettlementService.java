@@ -122,13 +122,8 @@ public class HandSettlementService {
     }
 
     private void updateTableAfterHand(Table table) {
+        // Status transitions (WAITING / NEXT_ROUND / CLOSED) are owned by RoundManagementService.
         table.setPotPaise(0);
-        table.setStatus(TableStatus.ROUND_END);
-
-        int minPlayers = table.getMinPlayers() > 0 ? table.getMinPlayers() : 3;
-        if (table.getSeatedPlayerIds() == null || table.getSeatedPlayerIds().size() < minPlayers) {
-            table.setStatus(TableStatus.WAITING);
-        }
         tableRepository.save(table);
     }
 }

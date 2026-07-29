@@ -4,14 +4,17 @@ import com.teenpatti.platform.game.dto.GameSessionSummaryDto;
 import com.teenpatti.platform.game.engine.BettingRoundEngine;
 import com.teenpatti.platform.game.engine.Card;
 import com.teenpatti.platform.game.engine.Deck;
+import com.teenpatti.platform.game.engine.GameEngineConfig;
 import com.teenpatti.platform.game.engine.HandOutcome;
 import com.teenpatti.platform.game.engine.PlayerStatus;
+import com.teenpatti.platform.game.winner.WinnerResolver;
 import com.teenpatti.platform.table.Table;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -135,6 +138,65 @@ public class GameSessionService {
     public Optional<GameSessionSummaryDto> getActiveSessionSummary(String tableId) {
         return gameSessionRepository.findByTableIdAndStatus(tableId, GameSessionStatus.ACTIVE)
                 .map(this::toSummaryDto);
+    }
+
+    public Optional<GameSession> findActiveSession(String tableId) {
+        return gameSessionRepository.findByTableIdAndStatus(tableId, GameSessionStatus.ACTIVE);
+    }
+
+    /**
+     * Rebuilds an in-memory {@link BettingRoundEngine} from the durable ACTIVE session.
+     * Used after JVM restart so SEE_CARDS / betting can continue the same hand.
+     */
+    public Optional<BettingRoundEngine> restoreEngineFromSession(
+            Table table,
+            GameEngineConfig config,
+            WinnerResolver winnerResolver) {
+        if (table == null || table.getId() == null) {
+            return Optional.empty();
+        }
+        return findActiveSession(table.getId()).map(session -> {
+            List<String> seated = table.getSeatedPlayerIds() != null
+                    ? new ArrayList<>(table.getSeatedPlayerIds())
+                    : new ArrayList<>(session.getPlayerHands().keySet());
+
+            Map<String, List<Card>> hands = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : session.getPlayerHands().entrySet()) {
+                List<Card> cards = entry.getValue().stream().map(Card::parse).toList();
+                hands.put(entry.getKey(), cards);
+            }
+
+            Map<String, PlayerStatus> statuses = new HashMap<>();
+            if (session.getPlayerStatus() != null) {
+                session.getPlayerStatus().forEach((userId, statusName) -> {
+                    try {
+                        statuses.put(userId, PlayerStatus.valueOf(statusName));
+                    } catch (Exception ignored) {
+                        statuses.put(userId, PlayerStatus.BLIND);
+                    }
+                });
+            }
+
+            // Prefer table seat order when available so turn indices stay stable.
+            List<String> ordered = seated.stream().filter(hands::containsKey).toList();
+            if (ordered.size() < 2) {
+                ordered = new ArrayList<>(hands.keySet());
+            }
+
+            BettingRoundEngine engine = new BettingRoundEngine(config, winnerResolver);
+            long pot = session.getPotPaise() > 0 ? session.getPotPaise() : table.getPotPaise();
+            long base = session.getCurrentBaseStakePaise() > 0
+                    ? session.getCurrentBaseStakePaise()
+                    : Math.max(table.getCurrentStakePaise(), table.getBootAmountPaise());
+            String turnUser = session.getCurrentTurnUserId() != null
+                    ? session.getCurrentTurnUserId()
+                    : table.getCurrentTurnUserId();
+
+            engine.restoreHand(ordered, hands, statuses, pot, base, turnUser);
+            log.info("Restored in-memory engine for table [{}] hand [{}] from session [{}]",
+                    table.getId(), session.getHandId(), session.getId());
+            return engine;
+        });
     }
 
     public Optional<GameSessionSummaryDto> getSessionSummaryByHandId(String handId) {

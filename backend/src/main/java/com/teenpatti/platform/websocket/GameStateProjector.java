@@ -14,6 +14,7 @@ import com.teenpatti.platform.user.User;
 import com.teenpatti.platform.user.UserRepository;
 import com.teenpatti.platform.websocket.dto.PlayerSummaryView;
 import com.teenpatti.platform.websocket.dto.PlayerViewGameState;
+import com.teenpatti.platform.websocket.dto.PendingShowView;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class GameStateProjector {
     private final TurnManagementService turnManagementService;
     private final BettingLogicService bettingLogicService;
     private final WinnerCalculationService winnerCalculationService;
+    private final HandContextManager handContextManager;
 
     public PlayerViewGameState createProjection(
             Table table,
@@ -95,11 +97,16 @@ public class GameStateProjector {
         }
 
         TableStatus status = table.getStatus();
-        boolean handEnded = status == TableStatus.ROUND_END || status == TableStatus.WAITING;
+        boolean handEnded = status == TableStatus.ROUND_END
+                || status == TableStatus.WAITING
+                || status == TableStatus.NEXT_ROUND
+                || status == TableStatus.COUNTDOWN
+                || status == TableStatus.CLOSED
+                || (engine != null && engine.isHandFinished());
         String currentTurnPlayerId = handEnded
                 ? null
                 : (engine != null ? engine.getCurrentTurnPlayerId() : table.getCurrentTurnUserId());
-        long potPaise = handEnded ? table.getPotPaise() : (engine != null ? engine.getPotPaise() : table.getPotPaise());
+        long potPaise = engine != null ? engine.getPotPaise() : table.getPotPaise();
         long currentBaseStakePaise = engine != null ? engine.getCurrentBaseStakePaise() : table.getCurrentStakePaise();
 
         TurnState turnState = turnManagementService.buildTurnState(table, engine);
@@ -108,13 +115,21 @@ public class GameStateProjector {
                 : BettingState.builder()
                         .tableId(table.getId())
                         .userId(recipientUserId)
+                        .playerState(PlayerStatus.PACKED.name())
                         .potPaise(potPaise)
                         .currentBaseStakePaise(currentBaseStakePaise)
+                        .blindAmountPaise(0L)
+                        .chaalAmountPaise(0L)
+                        .showCostPaise(0L)
+                        .sideShowCostPaise(0L)
                         .requiredBetPaise(0L)
                         .minRaiseBetPaise(0L)
                         .maxBetPaise(0L)
+                        .raiseOptionsPaise(List.of())
                         .playerContributedPaise(0L)
+                        .walletBalancePaise(0L)
                         .blindSeenRatio(2)
+                        .turnTimerSeconds(0)
                         .myTurn(false)
                         .allowedActions(List.of())
                         .build();
@@ -127,6 +142,26 @@ public class GameStateProjector {
         List<String> allowedActions = handEnded ? List.of() : bettingState.getAllowedActions();
         boolean myTurn = handEnded ? false : bettingState.isMyTurn();
 
+        // While Show/Side-Show is pending, the challenged player may respond immediately.
+        if (!handEnded && allowedActions != null
+                && (allowedActions.contains("SHOW_ACCEPT")
+                || allowedActions.contains("SIDE_SHOW_ACCEPT"))) {
+            myTurn = true;
+        }
+
+        PendingShowView pendingShowView = null;
+        if (!handEnded && table.getId() != null) {
+            var pendingOpt = handContextManager.getPendingShow(table.getId());
+            if (pendingOpt.isPresent()) {
+                var pending = pendingOpt.get();
+                pendingShowView = PendingShowView.builder()
+                        .requesterId(pending.requesterId())
+                        .targetId(pending.targetId())
+                        .requesterDisplayName(displayNameMap.getOrDefault(pending.requesterId(), "Player"))
+                        .build();
+            }
+        }
+
         WinnerSnapshot winnerSnapshot = null;
         if (handEnded && outcome != null) {
             winnerSnapshot = winnerCalculationService.buildWinnerSnapshot(
@@ -135,6 +170,8 @@ public class GameStateProjector {
                     outcome,
                     engine,
                     table.getGameVariant());
+        } else if (handEnded && outcome == null) {
+            winnerSnapshot = resolveWinnerSnapshotFromTable(table);
         }
 
         int dealerSeatIndex = turnState.getDealerSeatIndex();
@@ -165,16 +202,27 @@ public class GameStateProjector {
                 .packedPlayerIds(turnState.getPackedPlayerIds())
                 .potPaise(potPaise)
                 .currentBaseStakePaise(currentBaseStakePaise)
+                .blindAmountPaise(handEnded ? 0L : bettingState.getBlindAmountPaise())
+                .chaalAmountPaise(handEnded ? 0L : bettingState.getChaalAmountPaise())
+                .showCostPaise(handEnded ? 0L : bettingState.getShowCostPaise())
+                .sideShowCostPaise(handEnded ? 0L : bettingState.getSideShowCostPaise())
                 .requiredBetPaise(requiredBetPaise)
                 .minRaiseBetPaise(minRaiseBetPaise)
                 .maxBetPaise(maxBetPaise)
+                .raiseOptionsPaise(handEnded ? List.of() : bettingState.getRaiseOptionsPaise())
                 .playerContributedPaise(playerContributedPaise)
+                .walletBalancePaise(bettingState.getWalletBalancePaise())
+                .playerState(bettingState.getPlayerState())
                 .blindSeenRatio(blindSeenRatio)
+                .turnTimerSeconds(turnTimeoutSeconds)
                 .allowedActions(allowedActions)
                 .myTurn(myTurn)
                 .players(playerViews)
                 .handOutcome(outcome)
                 .winnerSnapshot(winnerSnapshot)
+                .pendingShow(pendingShowView)
+                .disconnectedPlayerIds(table.getDisconnectedPlayerIds() != null
+                        ? table.getDisconnectedPlayerIds() : List.of())
                 .build();
     }
 
@@ -192,5 +240,24 @@ public class GameStateProjector {
             return PlayerStatus.SEEN;
         }
         return PlayerStatus.BLIND;
+    }
+
+    private WinnerSnapshot resolveWinnerSnapshotFromTable(Table table) {
+        if (table.getRoundResults() == null || table.getRoundResults().isEmpty()) {
+            return null;
+        }
+        com.teenpatti.platform.table.TableRoundResult last = table.getRoundResults()
+                .get(table.getRoundResults().size() - 1);
+        return WinnerSnapshot.builder()
+                .tableId(table.getId())
+                .handId(last.getHandId())
+                .winnerUserId(last.getWinnerUserId())
+                .winnerDisplayName(last.getWinnerDisplayName())
+                .winningCategory(last.getWinningCategory())
+                .winningHandDescription(last.getWinningHandDescription())
+                .foldWin(last.isFoldWin())
+                .potPaise(last.getPotPaise())
+                .payoutPaise(last.getPayoutPaise())
+                .build();
     }
 }

@@ -64,24 +64,49 @@ public class GameBroadcastService {
         deliverToPlayer(tableId, playerId, GameServerMessage.stateUpdate(projection));
     }
 
+    /** Delivers a typed gameplay event over raw WebSocket (mirrors STOMP for reliability). */
+    public void deliverEventToPlayer(String playerId, String eventType, Object payload) {
+        if (playerId == null || eventType == null) {
+            return;
+        }
+        sendToSession(playerId, GameServerMessage.builder()
+                .type(eventType)
+                .payload(payload)
+                .build());
+    }
+
+    /** Broadcasts a typed event to every seated player's raw WebSocket session. */
+    public void broadcastEvent(String tableId, String eventType, Object payload) {
+        Optional<Table> tableOpt = tableRepository.findById(tableId);
+        if (tableOpt.isEmpty()) {
+            return;
+        }
+        List<String> seatedIds = tableOpt.get().getSeatedPlayerIds() != null
+                ? tableOpt.get().getSeatedPlayerIds() : List.of();
+        for (String playerId : seatedIds) {
+            deliverEventToPlayer(playerId, eventType, payload);
+        }
+    }
+
     private void deliverToPlayer(String tableId, String playerId, GameServerMessage message) {
-        if (redisTemplate != null) {
-            try {
-                String messageJson = objectMapper.writeValueAsString(message);
-                TableBroadcastPayload payload = TableBroadcastPayload.builder()
-                        .tableId(tableId)
-                        .recipientUserId(playerId)
-                        .messageJson(messageJson)
-                        .build();
-                redisTemplate.convertAndSend(
-                        RedisClusterConfig.TABLE_BROADCAST_CHANNEL,
-                        objectMapper.writeValueAsString(payload));
-            } catch (Exception e) {
-                log.error("Redis broadcast failed for table [{}] player [{}]: {}", tableId, playerId, e.getMessage());
-                sendToSession(playerId, message);
-            }
-        } else {
-            sendToSession(playerId, message);
+        // Always deliver locally first so Redis downtime never blocks live updates.
+        sendToSession(playerId, message);
+
+        if (redisTemplate == null) {
+            return;
+        }
+        try {
+            String messageJson = objectMapper.writeValueAsString(message);
+            TableBroadcastPayload payload = TableBroadcastPayload.builder()
+                    .tableId(tableId)
+                    .recipientUserId(playerId)
+                    .messageJson(messageJson)
+                    .build();
+            redisTemplate.convertAndSend(
+                    RedisClusterConfig.TABLE_BROADCAST_CHANNEL,
+                    objectMapper.writeValueAsString(payload));
+        } catch (Exception e) {
+            log.debug("Redis fan-out skipped for table [{}] player [{}]: {}", tableId, playerId, e.getMessage());
         }
     }
 

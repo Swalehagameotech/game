@@ -128,21 +128,36 @@ export default function AdminModal({ isOpen, onClose }) {
   };
 
   const handleWalletAdjust = async (mode) => {
-    if (!walletUser?.id || !walletAmount || !walletReason.trim()) return;
+    if (!walletUser?.id) {
+      setError('Lookup a user before adjusting their wallet');
+      return;
+    }
+    if (!walletAmount || Number.isNaN(parseFloat(walletAmount))) {
+      setError('Enter a valid amount in ₹');
+      return;
+    }
+    if (!walletReason.trim()) {
+      setError('Reason is required for wallet adjustments');
+      return;
+    }
     const paise = Math.round(parseFloat(walletAmount) * 100);
-    if (!paise || paise <= 0) return;
+    if (!paise || paise <= 0) {
+      setError('Amount must be greater than 0');
+      return;
+    }
     setLoading(true);
+    setError('');
     try {
       if (mode === 'add') {
-        await adminAddWallet(walletUser.id, paise, walletReason);
+        await adminAddWallet(walletUser.id, paise, walletReason.trim());
       } else {
-        await adminDeductWallet(walletUser.id, paise, walletReason);
+        await adminDeductWallet(walletUser.id, paise, walletReason.trim());
       }
       await handleLookupWalletUser();
       setWalletAmount('');
       setWalletReason('');
     } catch (err) {
-      setError(err?.response?.data?.message || 'Wallet adjustment failed');
+      setError(err?.response?.data?.message || err?.response?.data?.error || 'Wallet adjustment failed');
     } finally {
       setLoading(false);
     }
@@ -529,4 +544,5 @@ export default function AdminModal({ isOpen, onClose }) {
     </AnimatePresence>
   );
 }
+
 
