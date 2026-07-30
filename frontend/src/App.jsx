@@ -12,14 +12,15 @@ import AdminModal from '@/features/admin/AdminModal';
 import ProfileModal from '@/features/user/ProfileModal';
 import TutorialOverlay from '@/features/auth/TutorialOverlay';
 import { useAuth } from '@/context/AuthContext';
+import useLandscapeLock from '@/hooks/useLandscapeLock';
 
 export default function App() {
+  useLandscapeLock();
   const { user, isAuthenticated } = useAuth();
   const [activeTableId, setActiveTableId] = useState(() => {
     return localStorage.getItem('activeTableId') || null;
   });
 
-  // Modals state
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isWalletOpen, setIsWalletOpen] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
@@ -45,39 +46,56 @@ export default function App() {
     localStorage.removeItem('activeTableId');
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
-      <NotificationBootstrap />
-      <AnnouncementBanner />
-      {/* Top Header Navigation */}
-      <HeaderNav
-        onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenWallet={() => {
-          if (!isAuthenticated) setIsAuthOpen(true);
-          else setIsWalletOpen(true);
-        }}
-        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
-        onOpenNotifications={() => {
-          if (!isAuthenticated) setIsAuthOpen(true);
-          else setIsNotificationsOpen(true);
-        }}
-        onOpenAdmin={() => setIsAdminOpen(true)}
-        onOpenProfile={() => {
-          if (!isAuthenticated) setIsAuthOpen(true);
-          else setIsProfileOpen(true);
-        }}
-      />
+  const openAuth = () => setIsAuthOpen(true);
+  const openWallet = () => {
+    if (!isAuthenticated) setIsAuthOpen(true);
+    else setIsWalletOpen(true);
+  };
+  const openLeaderboard = () => setIsLeaderboardOpen(true);
+  const openNotifications = () => {
+    if (!isAuthenticated) setIsAuthOpen(true);
+    else setIsNotificationsOpen(true);
+  };
+  const openProfile = () => {
+    if (!isAuthenticated) setIsAuthOpen(true);
+    else setIsProfileOpen(true);
+  };
 
-      {/* Main View Body */}
-      <main className="flex-1 p-4 md:p-6">
+  return (
+    <div className="h-full min-h-full w-full bg-[#1a0505] text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 overflow-hidden">
+      <NotificationBootstrap />
+      {!activeTableId && <AnnouncementBanner />}
+      {!activeTableId && (
+        <HeaderNav
+          onOpenAuth={openAuth}
+          onOpenWallet={openWallet}
+          onOpenLeaderboard={openLeaderboard}
+          onOpenNotifications={openNotifications}
+          onOpenAdmin={() => setIsAdminOpen(true)}
+          onOpenProfile={openProfile}
+        />
+      )}
+
+      <main
+        className={
+          activeTableId
+            ? 'flex-1 min-h-0 p-0 overflow-hidden'
+            : 'flex-1 min-h-0 overflow-y-auto p-0'
+        }
+      >
         {activeTableId ? (
           <TeenPattiTableUI tableId={activeTableId} onLeaveTable={handleLeaveTable} />
         ) : (
-          <LobbyView onJoinTable={handleJoinTable} onOpenAuth={() => setIsAuthOpen(true)} />
+          <LobbyView
+            onJoinTable={handleJoinTable}
+            onOpenAuth={openAuth}
+            onOpenWallet={openWallet}
+            onOpenLeaderboard={openLeaderboard}
+            onOpenProfile={openProfile}
+          />
         )}
       </main>
 
-      {/* Modals & Drawers */}
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
       <WalletModal isOpen={isWalletOpen} onClose={() => setIsWalletOpen(false)} />
       <LeaderboardModal isOpen={isLeaderboardOpen} onClose={() => setIsLeaderboardOpen(false)} />
@@ -85,7 +103,6 @@ export default function App() {
       <AdminModal isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
       <ProfileModal isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
 
-      {/* First-Time Onboarding Tutorial Overlay */}
       <TutorialOverlay user={user} />
     </div>
   );

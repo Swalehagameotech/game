@@ -27,10 +27,14 @@ class StompRealtimeService {
       return;
     }
 
+    // Preserve table subscriptions across token reconnect
+    const savedTables = new Set(this.tableIds);
+
     if (this.client?.active) {
-      this.disconnect();
+      this.disconnect({ clearTables: false });
     }
 
+    this.tableIds = savedTables;
     this.userId = userId;
     this.token = token;
     const base = import.meta.env.VITE_STOMP_URL
@@ -136,9 +140,9 @@ class StompRealtimeService {
     this.subscriptions = [];
   }
 
-  disconnect() {
+  disconnect({ clearTables = true } = {}) {
     this.clearSubscriptions();
-    this.tableIds.clear();
+    if (clearTables) this.tableIds.clear();
     this.connected = false;
     this.userId = null;
     this.token = null;

@@ -316,7 +316,12 @@ public class WebSocketEventPublisher {
     }
 
     public void publishRoundFinished(String tableId, int nextRoundInSeconds) {
-        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.ROUND_FINISHED.name(), nextRoundInSeconds);
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.ROUND_FINISHED.name(), Map.of(
+                "tableId", tableId,
+                "nextRoundInSeconds", nextRoundInSeconds,
+                "countdownStartsAfterWinnerDisplay", true,
+                "message", "Round finished"
+        ));
     }
 
     public void publishNextRoundCountdown(String tableId, int durationSeconds) {

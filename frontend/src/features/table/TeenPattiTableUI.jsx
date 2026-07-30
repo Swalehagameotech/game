@@ -1,6 +1,9 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, DollarSign, ArrowUpRight, Ban, EyeOff, Award, LogOut, ShieldAlert, Sparkles, Coins, BookOpen, Trash2 } from 'lucide-react';
+import {
+  LogOut, ShieldAlert, Sparkles, BookOpen, Trash2,
+  ArrowLeft, MessageCircle, Settings, Loader2,
+} from 'lucide-react';
 import { wsGameService } from '@/shared/api/websocketService';
 import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
@@ -10,12 +13,17 @@ import {
   normalizeGameState,
   mergeGameState,
   isActiveHandStatus,
+  isDealableHandStatus,
   getWaitingBannerText,
 } from './tableUtils';
 import { RealTimeEventType } from '@/shared/api/realtimeEvents';
 import stompService from '@/shared/api/stompService';
+import TableArena from './components/TableArena';
+import WinnerEffects from './components/WinnerEffects';
+import ActionBar from './components/ActionBar';
+import { formatChipAmount } from './components/seatLayout';
 
-// Card Helper Function
+// Card Helper Function (logic / WS parsing only — rendering uses SVG PlayingCard)
 const SUIT_FROM_SYMBOL = { s: 'SPADES', h: 'HEARTS', d: 'DIAMONDS', c: 'CLUBS' };
 const RANK_FROM_SYMBOL = {
   2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVE', 6: 'SIX', 7: 'SEVEN', 8: 'EIGHT',
@@ -49,26 +57,6 @@ const parseHandsMap = (hands) => {
     out[userId] = cards.map(normalizeCard).filter(Boolean);
   });
   return out;
-};
-
-const renderCardSymbol = (suit) => {
-  switch (suit) {
-    case 'HEARTS': return { symbol: '♥', color: 'text-rose-500' };
-    case 'DIAMONDS': return { symbol: '♦', color: 'text-rose-500' };
-    case 'SPADES': return { symbol: '♠', color: 'text-slate-900' };
-    case 'CLUBS': return { symbol: '♣', color: 'text-slate-900' };
-    default: return { symbol: '?', color: 'text-slate-500' };
-  }
-};
-
-const formatRankLabel = (rank) => {
-  if (!rank) return '?';
-  const labels = {
-    ACE: 'A', KING: 'K', QUEEN: 'Q', JACK: 'J', TEN: '10',
-    NINE: '9', EIGHT: '8', SEVEN: '7', SIX: '6', FIVE: '5',
-    FOUR: '4', THREE: '3', TWO: '2',
-  };
-  return labels[rank] || rank;
 };
 
 export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
@@ -119,15 +107,38 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         const state = message.payload || message.state;
         updateGameState((prev) => {
           const merged = mergeGameState(prev, state, user);
-          // Synthesize pending show modal from live projection when STOMP event was missed.
-          if (merged?.status === 'SHOW' && state?.pendingShow && !merged.pendingShow) {
-            return { ...merged, pendingShow: state.pendingShow };
+          // Always honor pendingShow / winner from live projection
+          if (state?.pendingShow) {
+            const targetId = state.pendingShow.targetId || state.pendingShow.targetUserId;
+            const isTarget = targetId && user?.id && String(targetId) === String(user.id);
+            return {
+              ...merged,
+              status: 'SHOW',
+              pendingShow: {
+                requesterId: state.pendingShow.requesterId || state.pendingShow.requesterUserId,
+                targetId,
+                requesterDisplayName: state.pendingShow.requesterDisplayName || 'Opponent',
+              },
+              allowedActions: isTarget
+                ? [...new Set([...(merged.allowedActions || []), ...(state.allowedActions || []), 'SHOW_ACCEPT'])]
+                : (merged.allowedActions || []),
+              myTurn: isTarget ? true : merged.myTurn,
+            };
           }
-          if (merged?.status === 'SHOW'
-              && (merged.allowedActions || []).includes('SHOW_ACCEPT')
-              && !merged.pendingShow
-              && state?.pendingShow) {
-            return { ...merged, pendingShow: state.pendingShow };
+          if (state?.winnerSnapshot && (state.status === 'ROUND_END' || state.status === 'NEXT_ROUND' || merged.status === 'ROUND_END' || merged.status === 'NEXT_ROUND')) {
+            return {
+              ...merged,
+              winnerSnapshot: state.winnerSnapshot,
+              handOutcome: state.handOutcome || merged.handOutcome,
+              status: state.status === 'NEXT_ROUND' && (state.countdownSeconds > 0)
+                ? 'NEXT_ROUND'
+                : (merged.winnerSnapshot || state.winnerSnapshot ? (state.status || 'ROUND_END') : merged.status),
+              pendingShow: null,
+              // Don't invent a countdown during winner-display window
+              countdownSeconds: state.countdownSeconds > 0
+                ? state.countdownSeconds
+                : (merged.countdownSeconds || 0),
+            };
           }
           return merged;
         });
@@ -186,18 +197,30 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
       if (!event?.eventType) return;
 
       const payload = event.payload;
-      const payloadTableId = typeof payload === 'object' && payload !== null ? payload.tableId : null;
+      const payloadTableId = typeof payload === 'object' && payload !== null
+        ? (payload.tableId || payload.table?.id)
+        : null;
       const isUserQueueEvent = [
         RealTimeEventType.SHOW_REQUEST,
         RealTimeEventType.SHOW_REQUESTED,
         RealTimeEventType.PLAYER_CARDS_REVEALED_TO_SELF,
         RealTimeEventType.BETTING_STATE,
       ].includes(event.eventType);
+      const isHandResultEvent = [
+        RealTimeEventType.WINNER_DECLARED,
+        RealTimeEventType.FINAL_HANDS_REVEALED,
+        RealTimeEventType.SHOW_ACCEPTED,
+        RealTimeEventType.ROUND_FINISHED,
+        RealTimeEventType.SHOW_REQUEST,
+        RealTimeEventType.SHOW_REQUESTED,
+      ].includes(event.eventType);
       const matchesTable =
         event.destination?.includes(`/tables/${tableId}`)
+        || event.destination?.includes(`/queue/game/`)
         || payloadTableId === tableId
         || payload === tableId
-        || (isUserQueueEvent && (payloadTableId == null || payloadTableId === tableId));
+        || (isUserQueueEvent && (payloadTableId == null || payloadTableId === tableId))
+        || (isHandResultEvent && (payloadTableId == null || payloadTableId === tableId));
 
       if (!matchesTable) return;
 
@@ -230,12 +253,24 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             currentTurnUserId: turnUserId,
             activeUserId: turnUserId,
             activeDisplayName: payload?.activeDisplayName || payload?.displayName,
-            currentTurnSeatIndex: payload?.seatIndex ?? payload?.currentTurnSeatIndex,
-            turnTimeoutSeconds: payload?.durationSeconds ?? payload?.turnTimeoutSeconds,
-            turnSecondsRemaining: payload?.turnSecondsRemaining ?? payload?.durationSeconds,
-            turnDeadlineAt: payload?.turnDeadlineAt,
             myTurn: Boolean(turnUserId && user?.id && turnUserId === user.id),
           };
+          if (payload?.seatIndex != null || payload?.currentTurnSeatIndex != null) {
+            turnPatch.currentTurnSeatIndex = payload.seatIndex ?? payload.currentTurnSeatIndex;
+          }
+          if (payload?.durationSeconds != null || payload?.turnTimeoutSeconds != null) {
+            turnPatch.turnTimeoutSeconds = payload.durationSeconds ?? payload.turnTimeoutSeconds;
+          }
+          const secs = payload?.turnSecondsRemaining ?? payload?.durationSeconds ?? payload?.turnTimeoutSeconds;
+          if (secs != null && Number(secs) >= 0) {
+            turnPatch.turnSecondsRemaining = Number(secs);
+          }
+          // Keep previous deadline unless backend sends one — or derive from seconds
+          if (payload?.turnDeadlineAt) {
+            turnPatch.turnDeadlineAt = payload.turnDeadlineAt;
+          } else if (secs != null && Number(secs) > 0) {
+            turnPatch.turnDeadlineAt = new Date(Date.now() + Number(secs) * 1000).toISOString();
+          }
           if (payload?.dealerSeatIndex != null) turnPatch.dealerSeatIndex = payload.dealerSeatIndex;
           if (Array.isArray(payload?.activePlayerIds)) turnPatch.activePlayerIds = payload.activePlayerIds;
           if (Array.isArray(payload?.blindPlayerIds)) turnPatch.blindPlayerIds = payload.blindPlayerIds;
@@ -261,28 +296,36 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         }
         case RealTimeEventType.BETTING_STATE:
           if (payload && typeof payload === 'object') {
-            const isMine = !payload.userId || payload.userId === user?.id;
-            updateGameState((prev) => mergeGameState(prev, {
-              potPaise: payload.potPaise,
-              currentBaseStakePaise: payload.currentBaseStakePaise,
-              ...(isMine ? {
-                requiredBetPaise: payload.requiredBetPaise,
-                blindAmountPaise: payload.blindAmountPaise,
-                chaalAmountPaise: payload.chaalAmountPaise,
-                showCostPaise: payload.showCostPaise,
-                sideShowCostPaise: payload.sideShowCostPaise,
-                minRaiseBetPaise: payload.minRaiseBetPaise,
-                raiseOptionsPaise: payload.raiseOptionsPaise,
-                maxBetPaise: payload.maxBetPaise,
-                playerContributedPaise: payload.playerContributedPaise,
-                walletBalancePaise: payload.walletBalancePaise,
-                playerState: payload.playerState,
-                turnTimerSeconds: payload.turnTimerSeconds,
-                blindSeenRatio: payload.blindSeenRatio,
-                myTurn: payload.myTurn,
-                allowedActions: payload.allowedActions,
-              } : {}),
-            }, user));
+            const isMine = !payload.userId || String(payload.userId) === String(user?.id);
+            updateGameState((prev) => {
+              const showTarget = prev?.pendingShow?.targetId
+                && user?.id
+                && String(prev.pendingShow.targetId) === String(user.id);
+              const actions = Array.isArray(payload.allowedActions) ? [...payload.allowedActions] : [];
+              if (showTarget && !actions.includes('SHOW_ACCEPT')) actions.push('SHOW_ACCEPT');
+              return mergeGameState(prev, {
+                potPaise: payload.potPaise,
+                currentBaseStakePaise: payload.currentBaseStakePaise,
+                ...(isMine ? {
+                  requiredBetPaise: payload.requiredBetPaise,
+                  blindAmountPaise: payload.blindAmountPaise,
+                  chaalAmountPaise: payload.chaalAmountPaise,
+                  showCostPaise: payload.showCostPaise,
+                  sideShowCostPaise: payload.sideShowCostPaise,
+                  minRaiseBetPaise: payload.minRaiseBetPaise,
+                  raiseOptionsPaise: payload.raiseOptionsPaise,
+                  maxBetPaise: payload.maxBetPaise,
+                  playerContributedPaise: payload.playerContributedPaise,
+                  walletBalancePaise: payload.walletBalancePaise,
+                  playerState: payload.playerState,
+                  turnTimerSeconds: payload.turnTimerSeconds,
+                  blindSeenRatio: payload.blindSeenRatio,
+                  myTurn: showTarget ? true : payload.myTurn,
+                  allowedActions: actions,
+                  ...(showTarget ? { status: 'SHOW' } : {}),
+                } : {}),
+              }, user);
+            });
           }
           break;
         case RealTimeEventType.PLAYER_SEEN_CARDS:
@@ -316,27 +359,42 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         case RealTimeEventType.WINNER_DECLARED:
           if (payload && typeof payload === 'object') {
             setLocalTurnSeconds(0);
+            // Show winner immediately; next-round countdown starts ~5s later via NEXT_ROUND_COUNTDOWN
             updateGameState((prev) => mergeGameState(prev, {
               winnerSnapshot: payload,
+              handOutcome: {
+                winnerId: payload.winnerUserId || payload.winnerId,
+                winnerPayoutPaise: payload.payoutPaise,
+                winningCategory: payload.winningCategory,
+                notes: payload.winningHandDescription || payload.notes,
+              },
               status: 'ROUND_END',
+              countdownSeconds: 0,
+              nextRoundSeconds: 0,
               myTurn: false,
               allowedActions: [],
               turnSecondsRemaining: 0,
               turnDeadlineAt: null,
               currentTurnPlayerId: null,
-            }, user));
+              pendingShow: null,
+            }, user, { clearPendingShow: true }));
           }
           break;
         case RealTimeEventType.SHOW_ENABLED:
           // Backend signal only — buttons come from allowedActions / BETTING_STATE.
           break;
         case RealTimeEventType.ROUND_FINISHED: {
-          const seconds = typeof payload === 'number' ? payload : payload?.nextRoundInSeconds ?? 0;
+          // Keep ROUND_END + winner visible; countdown arrives later via NEXT_ROUND_COUNTDOWN
           updateGameState((prev) => mergeGameState(prev, {
-            status: seconds > 0 ? 'NEXT_ROUND' : 'ROUND_END',
-            countdownSeconds: seconds,
-            nextRoundSeconds: seconds,
-          }, user));
+            status: 'ROUND_END',
+            countdownSeconds: 0,
+            nextRoundSeconds: typeof payload === 'number'
+              ? payload
+              : (payload?.nextRoundInSeconds ?? prev?.nextRoundSeconds ?? 60),
+            myTurn: false,
+            allowedActions: [],
+            pendingShow: null,
+          }, user, { clearPendingShow: true }));
           break;
         }
         case RealTimeEventType.NEXT_ROUND_COUNTDOWN: {
@@ -358,9 +416,14 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               ...p,
               status: 'BLIND',
               cards: [],
-              cardCount: 3,
+              cardCount: 0, // seat cards appear after deal animation
             }));
+            const extra = (typeof payload === 'object' && payload !== null) ? { ...payload } : {};
+            // Don't let payload re-inject cards before deal finishes
+            delete extra.players;
+            delete extra.revealedHands;
             return mergeGameState(prev, {
+              ...extra,
               winnerSnapshot: null,
               handOutcome: null,
               pendingShow: null,
@@ -380,9 +443,18 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               blindPlayerIds: resetPlayers.map((p) => p.userId),
               myTurn: false,
               allowedActions: [],
-              ...(typeof payload === 'object' && payload !== null ? payload : {}),
             }, user, { forceResetHands: true });
           });
+          break;
+        case RealTimeEventType.CARDS_DISTRIBUTED:
+          updateGameState((prev) => mergeGameState(prev, {
+            status: prev?.status || 'RUNNING',
+            players: (prev?.players || []).map((p) => ({
+              ...p,
+              cardCount: p.cardCount > 0 ? p.cardCount : 3,
+              cards: Array.isArray(p.cards) ? p.cards : [],
+            })),
+          }, user));
           break;
         case RealTimeEventType.TABLE_WAITING_FOR_PLAYERS:
           updateGameState((prev) => mergeGameState(prev, {
@@ -392,6 +464,20 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             winnerSnapshot: null,
           }, user));
           break;
+        case RealTimeEventType.PLAYER_JOINED:
+        case RealTimeEventType.PLAYER_LEFT:
+        case RealTimeEventType.PLAYER_COUNT_CHANGED: {
+          // Refresh seated players live without full page reload
+          axiosClient.get(`/tables/${tableId}`).then((res) => {
+            const data = res.data?.data || res.data;
+            if (data) updateGameState((prev) => mergeGameState(prev, data, user));
+          }).catch(() => {});
+          axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+            const data = res.data?.data || res.data;
+            if (data) updateGameState((prev) => mergeGameState(prev, data, user));
+          }).catch(() => {});
+          break;
+        }
         case RealTimeEventType.WALLET_SETTLED:
           if (payload?.winnerUserId === user?.id && payload?.winnerBalanceAfterPaise != null) {
             window.dispatchEvent(new CustomEvent('wallet:updated', {
@@ -523,10 +609,11 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           break;
         case RealTimeEventType.SHOW_REQUEST:
         case RealTimeEventType.SHOW_REQUESTED: {
-          const targetId = payload?.targetUserId;
-          const requesterId = payload?.requesterId || payload?.requesterUserId;
+          const targetId = String(payload?.targetUserId || payload?.targetId || '');
+          const requesterId = String(payload?.requesterId || payload?.requesterUserId || '');
+          const me = String(user?.id || '');
           const requesterName = payload?.requesterDisplayName || 'Opponent';
-          if (targetId && targetId === user?.id) {
+          if (targetId && me && targetId === me) {
             setWsError('');
             updateGameState((prev) => mergeGameState(prev, {
               status: 'SHOW',
@@ -539,13 +626,24 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               myTurn: true,
               potPaise: payload?.potPaise ?? prev?.potPaise,
             }, user));
-          } else if (requesterId === user?.id) {
+          } else if (requesterId && me && requesterId === me) {
             setWsError(`Waiting for ${payload?.targetDisplayName || 'opponent'} to accept Show…`);
             updateGameState((prev) => mergeGameState(prev, {
               status: 'SHOW',
-              pendingShow: { requesterId, targetId },
+              pendingShow: { requesterId, targetId, requesterDisplayName: requesterName },
               allowedActions: [],
               myTurn: false,
+              potPaise: payload?.potPaise ?? prev?.potPaise,
+            }, user));
+          } else if (payload?.tableId === tableId || !payload?.tableId) {
+            // Other seated players — still mark table in SHOW so state stays in sync
+            updateGameState((prev) => mergeGameState(prev, {
+              status: 'SHOW',
+              pendingShow: {
+                requesterId,
+                targetId,
+                requesterDisplayName: requesterName,
+              },
               potPaise: payload?.potPaise ?? prev?.potPaise,
             }, user));
           }
@@ -578,16 +676,17 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             pendingShow: null,
             allowedActions: [],
             myTurn: false,
-          }, user));
+          }, user, { clearPendingShow: true }));
           break;
         case RealTimeEventType.FINAL_HANDS_REVEALED: {
           const parsedHands = parseHandsMap(payload?.hands);
-          const winnerId = payload?.winnerId;
-          if (!Object.keys(parsedHands).length) break;
+          const winnerId = payload?.winnerId || payload?.winnerUserId;
           updateGameState((prev) => {
             const players = (prev?.players || []).map((p) => {
               const revealed = parsedHands[p.userId];
-              if (!revealed?.length) return p;
+              if (!revealed?.length) {
+                return winnerId && p.userId === winnerId ? { ...p, isWinner: true } : p;
+              }
               return {
                 ...p,
                 status: 'SEEN',
@@ -599,12 +698,28 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             });
             return mergeGameState(prev, {
               players,
-              revealedHands: parsedHands,
+              revealedHands: Object.keys(parsedHands).length ? parsedHands : prev?.revealedHands,
               pendingShow: null,
               status: 'ROUND_END',
               allowedActions: [],
               myTurn: false,
-            }, user);
+              ...(winnerId ? {
+                winnerSnapshot: prev?.winnerSnapshot?.winnerUserId === winnerId
+                  ? prev.winnerSnapshot
+                  : {
+                      ...(prev?.winnerSnapshot || {}),
+                      tableId,
+                      winnerUserId: winnerId,
+                      winnerDisplayName: prev?.winnerSnapshot?.winnerDisplayName
+                        || players.find((p) => p.userId === winnerId)?.displayName
+                        || 'Winner',
+                    },
+                handOutcome: {
+                  ...(prev?.handOutcome || {}),
+                  winnerId,
+                },
+              } : {}),
+            }, user, { clearPendingShow: true });
           });
           break;
         }
@@ -808,7 +923,28 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
   const tableType = gameState?.tableType;
   const isPrivateTable = tableType === 'PRIVATE';
   const countdownSeconds = gameState?.countdownSeconds ?? 0;
-  const isHost = Boolean(hostId && user?.id === hostId);
+  const isHost = Boolean(hostId && user?.id && hostId === user.id);
+
+  // Tick next-round countdown locally so it updates every second without waiting for server ticks
+  useEffect(() => {
+    if (status !== 'NEXT_ROUND' && status !== 'ROUND_END') return undefined;
+    if (!countdownSeconds || countdownSeconds <= 0) return undefined;
+    const id = setInterval(() => {
+      updateGameState((prev) => {
+        const cur = prev?.countdownSeconds ?? 0;
+        if (cur <= 0) return prev;
+        const next = Math.max(0, cur - 1);
+        if (next === cur) return prev;
+        return {
+          ...prev,
+          countdownSeconds: next,
+          nextRoundSeconds: next,
+          status: next > 0 ? 'NEXT_ROUND' : (prev?.status || 'NEXT_ROUND'),
+        };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [status, countdownSeconds > 0, updateGameState]);
   const canStart = !isTableLoading
     && status
     && (status === 'WAITING' || status === 'ROUND_END')
@@ -856,10 +992,13 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
   // Status drives "hand over" — do not treat a stale winnerSnapshot as game-over while RUNNING.
   const handEnded = status === 'ROUND_END' || status === 'WAITING' || status === 'NEXT_ROUND' || status === 'CLOSED';
   const handInProgress = isActiveHandStatus(status);
+  const cardsLive = isDealableHandStatus(status) && players.length >= minPlayers;
   const revealedHands = gameState?.revealedHands || {};
   const showdownRevealed = handEnded && Object.keys(revealedHands).length > 0;
   const pendingShow = gameState?.pendingShow;
-  const isShowTarget = pendingShow?.targetId === user?.id;
+  const isShowTarget = Boolean(
+    pendingShow?.targetId && user?.id && String(pendingShow.targetId) === String(user.id),
+  );
   const showWinnerBanner = Boolean((winnerSnapshot || handOutcome) && handEnded);
   const turnPlayer = players.find((p) => p.userId === currentTurnUserId);
   const turnPlayerName = gameState?.activeDisplayName
@@ -867,7 +1006,8 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     || (currentTurnUserId === user?.id ? (user?.displayName || 'You') : null)
     || (currentTurnUserId ? `Player` : null);
   const canAct = (action) => {
-    if (!handInProgress) return false;
+    if (action === 'SHOW_ACCEPT' && isShowTarget) return true;
+    if (!handInProgress && status !== 'SHOW') return false;
     return allowedActions.includes(action);
   };
   const dealerSeatIndex = gameState?.dealerSeatIndex ?? -1;
@@ -910,278 +1050,226 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         countdownSeconds,
       });
 
+  const bootRupees = (gameState?.bootAmountPaise || 0) / 100;
+  const iconBtn =
+    'w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-black/40 backdrop-blur-sm text-[#d4af37] flex items-center justify-center cursor-pointer transition-all hover:bg-black/55 shadow-[0_0_0_1.5px_rgba(212,175,55,0.65),0_0_14px_rgba(212,175,55,0.25)]';
+
   return (
-    <div className="min-h-[85vh] flex flex-col justify-between p-4 relative overflow-hidden bg-slate-950 rounded-3xl border border-slate-800 shadow-2xl">
-      {/* Table Felt Background & Ambient Glow */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-emerald-950/20 to-slate-950 pointer-events-none" />
+    <div className="relative w-full h-full min-h-0 overflow-hidden flex flex-col">
+      {/* Full-page casino room background */}
+      <img
+        src="https://res.cloudinary.com/dsafvwkrf/image/upload/v1785347148/8fdf3e41-a727-4785-b6db-48b163f39f69.png"
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover object-center select-none pointer-events-none"
+        draggable={false}
+      />
 
-      {/* Top Header Bar */}
-      <div className="relative z-20 flex items-center justify-between bg-slate-900/80 backdrop-blur-md px-5 py-3 rounded-2xl border border-slate-800">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 flex items-center justify-center font-extrabold text-lg shadow-md shadow-amber-500/20">
-            ♠
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-slate-100 text-sm">Teen Patti Table #{tableId?.slice(-6)}</h3>
-              <button
-                onClick={() => {
-                  const codeToCopy = gameState?.inviteCode || tableId;
-                  if (codeToCopy) navigator.clipboard.writeText(codeToCopy);
-                }}
-                className="px-2.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                title="Click to copy Room Code"
-              >
-                Copy Code: {gameState?.inviteCode || tableId?.slice(-6)}
-              </button>
-            </div>
-            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 mt-0.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              Live WebSocket Sync
-            </span>
-          </div>
+      {/* Top-left — compact in landscape phone height */}
+      <div className="absolute top-2 left-2 sm:top-4 sm:left-4 z-40 flex flex-row items-start gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
+          <button type="button" onClick={() => setShowLeaveModal(true)} className={iconBtn} title="Back">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <button type="button" className={iconBtn} title="Chat" onClick={() => {}}>
+            <MessageCircle className="w-4 h-4" />
+          </button>
+          <button type="button" className={iconBtn} title="Settings" onClick={() => setShowRulebook(true)}>
+            <Settings className="w-4 h-4" />
+          </button>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowRulebook(true)}
-            className="px-3.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Rules</span>
-          </button>
-
-          {hostId === user?.id && (
+        <div className="text-[10px] sm:text-[12px] text-white leading-snug drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)]">
+          <div>
+            Table ID:{' '}
             <button
-              onClick={async () => {
-                if (window.confirm('Are you sure you want to delete this table? All seated players will be refunded.')) {
-                  try {
-                    await axiosClient.delete(`/tables/${tableId}`);
-                  } catch (e) {
-                    console.error('Delete table error:', e);
-                  } finally {
-                    onLeaveTable();
-                  }
-                }
+              type="button"
+              className="font-mono text-[#f5e6a8] hover:underline cursor-pointer font-semibold"
+              onClick={() => {
+                const code = gameState?.inviteCode || tableId;
+                if (code) navigator.clipboard.writeText(code);
               }}
-              className="px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Delete Table (Creator Only)"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Table</span>
+              {gameState?.inviteCode || tableId?.slice(-8) || '—'}
             </button>
-          )}
-
-          <button
-            onClick={() => setShowLeaveModal(true)}
-            className="px-3.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Leave Table</span>
-          </button>
+          </div>
+          <div className="hidden sm:block">Boot: {formatChipAmount(gameState?.bootAmountPaise || 0)}</div>
+          <div className="hidden sm:block">Max Players: {maxPlayers}</div>
         </div>
       </div>
 
-      {/* Main Oval Poker Table Felt */}
-      <div className="relative z-10 my-auto py-8">
-        <div className="w-full max-w-4xl mx-auto h-[420px] rounded-[200px] bg-gradient-to-b from-emerald-800 via-emerald-900 to-emerald-950 border-[10px] border-amber-800/80 shadow-[inset_0_0_80px_rgba(0,0,0,0.8)] relative flex items-center justify-center">
-          {/* Inner Felt Border */}
-          <div className="absolute inset-4 rounded-[180px] border-2 border-emerald-500/20 pointer-events-none" />
+      {/* Top-right: username + Rules + leave */}
+      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-40 flex items-center gap-1.5 sm:gap-2">
+        {user && (
+          <div className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full bg-black/45 backdrop-blur-sm text-[#f5e6a8] text-[10px] sm:text-xs font-bold max-w-[140px] sm:max-w-[180px] truncate shadow-[0_0_0_1.5px_rgba(212,175,55,0.55)]">
+            {user.displayName || user.username || user.name || 'You'}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowRulebook(true)}
+          className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full bg-black/35 backdrop-blur-sm text-[#f5e6a8] text-[10px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-[0_0_0_1.5px_rgba(212,175,55,0.55),0_0_12px_rgba(212,175,55,0.2)]"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Rules</span>
+        </button>
+        {hostId === user?.id && (
+          <button
+            type="button"
+            onClick={async () => {
+              if (window.confirm('Are you sure you want to delete this table? All seated players will be refunded.')) {
+                try {
+                  await axiosClient.delete(`/tables/${tableId}`);
+                } catch (e) {
+                  console.error('Delete table error:', e);
+                } finally {
+                  onLeaveTable();
+                }
+              }
+            }}
+            className="p-1.5 sm:p-2 rounded-full bg-black/35 backdrop-blur-sm text-rose-300 cursor-pointer shadow-[0_0_0_1.5px_rgba(244,63,94,0.45)]"
+            title="Delete Table"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowLeaveModal(true)}
+          className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full bg-black/35 backdrop-blur-sm text-rose-300 text-[10px] sm:text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-[0_0_0_1.5px_rgba(244,63,94,0.5)]"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Leave Table</span>
+        </button>
+      </div>
 
-          {/* Status banner — host-controlled start */}
-          <div className="absolute top-8 z-20 bg-slate-900/90 border border-amber-500/30 px-5 py-2.5 rounded-2xl backdrop-blur-md shadow-xl text-center flex flex-col items-center gap-2 min-w-[280px]">
-            <div className="flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${handInProgress ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
-              <span className="text-xs font-bold text-slate-200">{statusBannerText}</span>
-            </div>
-            {(status === 'COUNTDOWN' || status === 'NEXT_ROUND' || countdownSeconds > 0) && (
-              <div className="flex flex-col items-center gap-1">
-                {status === 'NEXT_ROUND' && (
-                  <span className="text-xs text-emerald-300 font-black uppercase tracking-[0.2em]">
-                    Next Round In
-                  </span>
-                )}
-                <div className="text-5xl font-black text-amber-400 font-mono tabular-nums leading-none drop-shadow-[0_0_12px_rgba(251,191,36,0.45)]">
+      {/* Main row (landscape): table + actions packed for short height */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-2 sm:px-3 pt-6 sm:pt-8 pb-2 min-h-0">
+        <div className="relative w-full max-w-[1480px] flex justify-center shrink min-h-0 max-h-[min(62dvh,720px)] sm:max-h-[min(72dvh,820px)] -translate-y-2 sm:-translate-y-4">
+          <TableArena
+            players={players}
+            myUserId={user?.id}
+            currentTurnUserId={currentTurnUserId}
+            dealerSeatIndex={dealerSeatIndex}
+            hostId={hostId}
+            handInProgress={handInProgress}
+            cardsLive={cardsLive}
+            minPlayers={minPlayers}
+            handEnded={handEnded}
+            showdownRevealed={showdownRevealed}
+            revealedHands={revealedHands}
+            disconnectedIds={gameState?.disconnectedPlayerIds || []}
+            potRupees={potRupees}
+            potPaise={gameState?.potPaise || 0}
+            walletBalancePaise={gameState?.walletBalancePaise}
+            turnDeadlineAt={gameState?.turnDeadlineAt}
+            turnSecondsRemaining={gameState?.turnSecondsRemaining}
+            turnDurationSeconds={gameState?.turnDurationSeconds || 30}
+            winnerUserId={winnerSnapshot?.winnerUserId || handOutcome?.winnerId}
+          />
+
+          {!handInProgress && (
+            <div className="absolute top-[18%] left-1/2 -translate-x-1/2 z-30 w-[min(90%,280px)] text-center pointer-events-auto">
+              {(status === 'COUNTDOWN' || status === 'NEXT_ROUND' || countdownSeconds > 0) && (
+                <div className="text-4xl sm:text-5xl font-black text-[#d4af37] font-mono drop-shadow-[0_0_16px_rgba(212,175,55,0.55)] mb-2">
                   {countdownSeconds}
                 </div>
-                <span className="text-[10px] text-amber-200/80 font-semibold uppercase tracking-wider">
-                  {status === 'NEXT_ROUND' ? 'seconds' : 'starting soon'}
-                </span>
-              </div>
-            )}
-            {handInProgress && currentTurnUserId && (
-              <div className="mt-1 px-4 py-2 rounded-xl bg-amber-500/15 border border-amber-400/40 w-full">
-                <p className="text-[10px] uppercase tracking-[0.25em] font-black text-amber-300/90">
-                  {isMyTurn ? 'Your Turn' : 'Waiting for'}
-                </p>
-                <p className="text-lg sm:text-xl font-black text-amber-100 truncate">
-                  {isMyTurn ? (user?.displayName || 'You') : turnPlayerName}
-                </p>
-                {turnDisplaySeconds > 0 && (
-                  <p className="text-sm font-mono font-bold text-amber-300 tabular-nums mt-0.5">
-                    {turnDisplaySeconds}s
-                  </p>
-                )}
-              </div>
-            )}
-            {!isTableLoading && isPrivateTable && isHost && canStart && !handInProgress && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
-              <button
-                onClick={handleStartGame}
-                disabled={startLoading}
-                className="mt-1 px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/30 disabled:opacity-60 cursor-pointer"
-              >
-                {startLoading ? 'Starting…' : status === 'ROUND_END' ? 'Start Next Round' : 'Start Game'}
-              </button>
-            )}
-            {!isTableLoading && isPrivateTable && !isHost && canStart && !handInProgress && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
-              <span className="text-[10px] text-amber-300/80 font-semibold">Waiting for host to start</span>
-            )}
-            {!isTableLoading && !isPrivateTable && canStart && !handInProgress && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
-              <span className="text-[10px] text-emerald-300/80 font-semibold">Auto-start when countdown completes</span>
-            )}
-            {startError && <span className="text-[10px] text-rose-400">{startError}</span>}
-          </div>
-
-          {/* Central Pot Display */}
-          <div className="text-center z-10 bg-slate-950/80 backdrop-blur-md border border-amber-500/40 px-6 py-4 rounded-3xl shadow-2xl">
-            <div className="flex items-center justify-center gap-1.5 text-amber-400 mb-1">
-              <Coins className="w-5 h-5 animate-bounce" />
-              <span className="text-[10px] uppercase font-black tracking-widest text-amber-300">TOTAL POT</span>
+              )}
+              {!isTableLoading && isPrivateTable && isHost && canStart && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
+                <button
+                  type="button"
+                  onClick={handleStartGame}
+                  disabled={startLoading}
+                  className="px-8 py-2.5 rounded-full bg-black/40 backdrop-blur-sm text-[#f5e6a8] font-black text-sm cursor-pointer disabled:opacity-60 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_24px_rgba(212,175,55,0.35)]"
+                >
+                  {startLoading ? 'Starting…' : status === 'ROUND_END' ? 'Start Next Round' : 'Start Game'}
+                </button>
+              )}
+              {startError && <p className="mt-1 text-[10px] text-rose-300 drop-shadow">{startError}</p>}
             </div>
-            <span className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 font-mono">
-              ₹{potRupees.toFixed(2)}
-            </span>
-            <span className="text-[10px] text-slate-400 block mt-1">({gameState?.potPaise || 0} Paise)</span>
-            {handInProgress && baseStakeRupees > 0 && (
-              <span className="text-[10px] text-emerald-300 block mt-1">
-                Stake unit: ₹{baseStakeRupees.toFixed(2)}
-              </span>
-            )}
-          </div>
-
-          {/* Player Seats Layout Around Oval */}
-          {players.map((player, index) => {
-            const isTurn = currentTurnUserId === player.userId;
-            const isMe = player.userId === user?.id;
-            const isDealer = dealerSeatIndex >= 0 && index === dealerSeatIndex;
-            const isTableHost = hostId && player.userId === hostId;
-            const isDisconnected = (gameState?.disconnectedPlayerIds || []).includes(player.userId)
-              || player.connected === false;
-
-            // Position mapping for 6 seats around oval
-            const seatPositions = [
-              'bottom-[-35px] left-1/2 -translate-x-1/2', // Seat 0 (Me / Bottom)
-              'bottom-[60px] left-[-30px]',                // Seat 1 (Bottom Left)
-              'top-[60px] left-[-30px]',                   // Seat 2 (Top Left)
-              'top-[-35px] left-1/2 -translate-x-1/2',    // Seat 3 (Top Center)
-              'top-[60px] right-[-30px]',                  // Seat 4 (Top Right)
-              'bottom-[60px] right-[-30px]',               // Seat 5 (Bottom Right)
-            ];
-
-            const posClass = seatPositions[index % seatPositions.length];
-
-            return (
-              <div key={player.userId || `seat-${index}`} className={`absolute ${posClass} z-20 flex flex-col items-center`}>
-                {/* Seat Box */}
-                <div className={`p-3 rounded-2xl bg-slate-900/90 border backdrop-blur-md shadow-2xl transition-all flex flex-col items-center min-w-[140px] ${
-                  isTurn ? 'border-amber-400 ring-4 ring-amber-500/30 scale-105' : 'border-slate-800'
-                }`}>
-                  {/* Player Status Badge */}
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                      player.status === 'SEEN' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' :
-                      player.status === 'PACKED' ? 'bg-slate-800 text-slate-500 border border-slate-700' :
-                      'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                    }`}>
-                      {player.status || 'BLIND'}
-                    </span>
-                    {isTurn && (
-                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                    )}
-                    {isDealer && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase bg-violet-500/20 text-violet-300 border border-violet-500/30">
-                        D
-                      </span>
-                    )}
-                    {isTableHost && !handInProgress && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        Host
-                      </span>
-                    )}
-                    {isDisconnected && player.status !== 'PACKED' && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                        Reconnecting…
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Player Display Name */}
-                  <span className="font-bold text-xs text-slate-100 truncate max-w-[110px]">
-                    {player.displayName || `Player ${index + 1}`} {isMe && '(You)'}
-                  </span>
-
-                  {/* 3-Card Hand Display */}
-                  <div className={`flex gap-1.5 my-2 ${player.isWinner ? 'ring-2 ring-amber-400 rounded-xl p-1' : ''}`}>
-                    {(() => {
-                      const visibleCards = showdownRevealed
-                        ? (revealedHands[player.userId] || player.cards || [])
-                        : (isMe ? (player.cards || []) : []);
-                      if (visibleCards.length > 0) {
-                        return visibleCards.map((card, cIdx) => {
-                          const { symbol, color } = renderCardSymbol(card.suit);
-                          return (
-                            <div
-                              key={`${player.userId}-${cIdx}`}
-                              className="w-8 h-12 rounded-lg bg-slate-100 border border-slate-300 shadow-md flex flex-col items-center justify-between p-1 font-bold text-xs"
-                            >
-                              <span className={`leading-none ${color}`}>{formatRankLabel(card.rank)}</span>
-                              <span className={`text-sm ${color}`}>{symbol}</span>
-                            </div>
-                          );
-                        });
-                      }
-                      return Array.from({ length: player.cardCount || 3 }).map((_, cIdx) => (
-                        <div
-                          key={cIdx}
-                          className="w-7 h-11 rounded-lg bg-gradient-to-br from-amber-700 to-amber-900 border border-amber-500/40 shadow-sm flex items-center justify-center text-[10px] text-amber-300 font-extrabold"
-                        >
-                          ♠
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          )}
         </div>
+
+        {/* Action buttons — one horizontal row */}
+        <div className="w-full max-w-5xl mt-4 sm:mt-6 shrink-0 px-1">
+          {handInProgress ? (
+            <ActionBar
+              canAct={canAct}
+              sendPlayerAction={sendPlayerAction}
+              actionLoading={actionLoading}
+              myStatus={myStatus}
+              blindBetRupees={blindBetRupees}
+              chaalBetRupees={chaalBetRupees}
+              requiredBetRupees={requiredBetRupees}
+              minRaiseBetRupees={minRaiseBetRupees}
+              sideShowCost={(gameState?.sideShowCostPaise || gameState?.chaalAmountPaise || 0) / 100}
+              showCost={(gameState?.showCostPaise || gameState?.chaalAmountPaise || 0) / 100}
+              wsError={wsError}
+            />
+          ) : null}
+        </div>
+
+        {/* Boot amount box — below buttons */}
+        <div className="mt-1.5 sm:mt-2.5 shrink-0 flex items-center gap-1.5 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-[11px] sm:text-[12px] text-white shadow-[0_0_0_1px_rgba(212,175,55,0.35)]">
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+            <circle cx="12" cy="12" r="11" fill="#d4af37" stroke="#f5e6a8" strokeWidth="1.5" />
+            <circle cx="12" cy="12" r="6" fill="none" stroke="#7a5a12" strokeWidth="1.2" strokeDasharray="2 1.5" />
+          </svg>
+          <span>Boot Amount: <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
+        </div>
+
+        {handInProgress && isMyTurn && myStatus !== 'PACKED' && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-2 px-4 py-1.5 rounded-full bg-[#d4af37] text-black text-[11px] font-black uppercase tracking-wider shadow-[0_0_20px_rgba(212,175,55,0.55)]"
+          >
+            Your Turn{turnDisplaySeconds > 0 ? ` · ${turnDisplaySeconds}s` : ''}
+          </motion.div>
+        )}
       </div>
 
-      {/* Show Request Modal — challenged player must accept */}
+      {/* Game status */}
+      <div className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 z-40 max-w-[220px] sm:max-w-[260px] px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-2xl bg-black/50 backdrop-blur-md">
+        <div className="flex items-center gap-2 text-[10px] sm:text-[11px] text-white">
+          {(isTableLoading || status === 'COUNTDOWN' || dealActiveLike(status, handInProgress, countdownSeconds)) && (
+            <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#d4af37] animate-spin shrink-0" />
+          )}
+          <div>
+            <div className="text-[9px] sm:text-[10px] text-emerald-400 font-semibold">Game Status</div>
+            <div className="text-white/90 truncate">{statusBannerText}</div>
+          </div>
+        </div>
+        {handInProgress && currentTurnUserId && (
+          <p className="mt-1 text-[10px] text-[#f5e6a8] font-semibold truncate">
+            {isMyTurn ? `Your turn${turnDisplaySeconds > 0 ? ` · ${turnDisplaySeconds}s` : ''}` : `Waiting · ${turnPlayerName}`}
+          </p>
+        )}
+      </div>
+
       <AnimatePresence>
-        {pendingShow && isShowTarget && handInProgress && (
+        {pendingShow && isShowTarget && (handInProgress || status === 'SHOW') && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
           >
             <motion.div
               initial={{ scale: 0.9, y: 16 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 8 }}
-              className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-950 p-6 shadow-2xl text-center"
+              className="w-full max-w-md rounded-2xl bg-black/70 backdrop-blur-xl p-6 shadow-[0_0_0_1px_rgba(212,175,55,0.4)] text-center"
             >
-              <Sparkles className="w-10 h-10 text-amber-400 mx-auto mb-4" />
+              <Sparkles className="w-10 h-10 text-[#d4af37] mx-auto mb-4" />
               <h3 className="text-xl font-black text-amber-100 mb-2">Show Requested</h3>
               <p className="text-sm text-slate-300 mb-6">
                 {pendingShow.requesterDisplayName || 'Your opponent'} has requested a Show.
                 {myStatus === 'SEEN' ? '' : ' Your cards are now visible to you only.'}
               </p>
               <button
+                type="button"
                 onClick={() => sendPlayerAction('SHOW_ACCEPT')}
                 disabled={actionLoading || !canAct('SHOW_ACCEPT')}
-                className="w-full px-6 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-sm rounded-xl shadow-lg disabled:opacity-50 cursor-pointer"
+                className="w-full px-6 py-3 rounded-full bg-black/40 text-[#f5e6a8] font-black text-sm cursor-pointer disabled:opacity-50 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_20px_rgba(212,175,55,0.35)]"
               >
                 Accept Show
               </button>
@@ -1190,260 +1278,52 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         )}
       </AnimatePresence>
 
-      {/* Big Winner Banner */}
-      <AnimatePresence>
-        {showWinnerBanner && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.85, y: 24 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: -12 }}
-            transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-            className="relative z-40 mb-4 mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border-2 border-amber-400/60 bg-gradient-to-b from-amber-500/25 via-slate-950/95 to-slate-950 shadow-[0_0_60px_rgba(245,158,11,0.35)] backdrop-blur-xl"
-          >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.25),transparent_55%)] pointer-events-none" />
-            <div className="relative px-6 py-8 sm:px-10 sm:py-10 text-center">
-              <div className="flex items-center justify-center gap-3 text-amber-300 mb-4">
-                <Award className="w-8 h-8 sm:w-10 sm:h-10" />
-                <span className="font-black text-sm sm:text-base uppercase tracking-[0.35em]">
-                  Winner
-                </span>
-                <Award className="w-8 h-8 sm:w-10 sm:h-10" />
-              </div>
-
-              <h2 className="text-4xl sm:text-6xl md:text-7xl font-black uppercase tracking-wide text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-yellow-300 to-amber-500 drop-shadow-[0_4px_24px_rgba(251,191,36,0.45)] leading-tight break-words">
-                {winnerDisplayName
-                  || `Player #${(winnerSnapshot?.winnerUserId || handOutcome?.winnerId || 'Winner').slice(-6)}`}
-              </h2>
-
-              <p className="mt-4 text-2xl sm:text-3xl font-black text-slate-50">
-                Won ₹{winnerPayoutRupees.toFixed(2)}
-              </p>
-              <p className="mt-2 text-sm sm:text-base font-bold uppercase tracking-[0.2em] text-amber-300/90">
-                {winningCategoryLabel}
-              </p>
-
-              {status === 'NEXT_ROUND' && countdownSeconds > 0 && (
-                <p className="mt-5 text-lg sm:text-xl font-black text-emerald-300 tabular-nums">
-                  Next round in {countdownSeconds}s
-                </p>
-              )}
-
-              {winnerSnapshot?.winnerUserId === user?.id && (
-                <p className="mt-3 text-sm text-emerald-300 font-semibold">
-                  Credited to your wallet
-                </p>
-              )}
-
-              {winnerSnapshot?.participants?.length > 1 && (
-                <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  {winnerSnapshot.participants.map((p) => (
-                    <span
-                      key={p.userId}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
-                        p.winner
-                          ? 'bg-amber-500/25 border-amber-400 text-amber-100'
-                          : 'bg-slate-900/80 border-slate-700 text-slate-400'
-                      }`}
-                    >
-                      {p.displayName}: {p.handDescription || p.handRank}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Beginner Help Mode Contextual Hint Banner (First 5 Matches) */}
-      {(user?.matchesPlayedCount ?? 0) < 5 && handInProgress && (
-        <div className="relative z-20 mb-3 px-4 py-2 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/15 border border-amber-500/30 rounded-xl text-center backdrop-blur-md">
-          <span className="text-xs font-semibold text-amber-300 flex items-center justify-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5" />
-            {isMyTurn
-              ? myStatus === 'BLIND'
-                ? 'Your turn — you are Blind (1×). See Cards anytime, or Chaal to play blind.'
-                : 'Your turn — you are Seen (2×). Chaal to continue or Raise to increase stake.'
-              : myStatus === 'BLIND'
-              ? 'You are Blind — click See Cards to reveal your hand (does not use your turn).'
-              : players.length === 2
-              ? 'Only 2 players remain! You may click Show to reveal hands and claim the pot.'
-              : 'Help Mode Active (Match ' + ((user?.matchesPlayedCount || 0) + 1) + '/5): Follow turns and manage your bets!'}
-          </span>
-        </div>
-      )}
-
-      {/* Bottom Action Controls Bar — only during active hand */}
-      {handInProgress && (
-      <div className="relative z-20 bg-slate-900/90 backdrop-blur-xl border border-slate-800 p-4 rounded-2xl shadow-2xl">
-        {wsError && (
-          <div className="mb-3 text-center text-xs text-rose-400 font-semibold">{wsError}</div>
-        )}
-        {isMyTurn && turnDisplaySeconds > 0 && (
-          <div className="mb-3 text-center">
-            <span className="text-[10px] uppercase font-black tracking-widest text-amber-400">Your turn</span>
-            <div className="text-2xl font-black text-amber-300 font-mono tabular-nums">{turnDisplaySeconds}s</div>
-          </div>
-        )}
-        {!isMyTurn && handInProgress && currentTurnUserId && (
-          <div className="mb-3 text-center text-[10px] text-slate-400 font-semibold">
-            Waiting for <span className="text-amber-300">{turnPlayerName}</span>
-            {turnDisplaySeconds > 0 && (
-              <> — <span className="text-amber-300 font-mono">{turnDisplaySeconds}s</span></>
-            )}
-          </div>
-        )}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* See Cards Action */}
-          <div>
-            {canAct('SEE_CARDS') ? (
-              <button
-                onClick={() => sendPlayerAction('SEE_CARDS')}
-                disabled={actionLoading || !canAct('SEE_CARDS')}
-                className="px-4 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-cyan-600/20 flex items-center gap-2 transition-all disabled:opacity-40 cursor-pointer"
-              >
-                <Eye className="w-4 h-4" />
-                <span>See Cards</span>
-              </button>
-            ) : myStatus === 'SEEN' ? (
-              <div className="px-3 py-1.5 bg-slate-950 border border-cyan-500/30 rounded-xl text-cyan-400 text-xs font-bold flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5" />
-                <span>Cards Seen</span>
-              </div>
-            ) : (
-              <div className="px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-slate-500 text-xs font-bold">
-                Packed
-              </div>
-            )}
-          </div>
-
-          {/* Betting Action Buttons */}
-          <div className="flex items-center gap-2">
-            {canAct('PACK') && (
-            <button
-              onClick={() => sendPlayerAction('PACK')}
-              disabled={!canAct('PACK') || actionLoading}
-              className="px-4 py-2.5 bg-slate-950 hover:bg-rose-950/80 border border-rose-500/40 text-rose-400 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <Ban className="w-4 h-4" />
-              <span>Pack (Fold)</span>
-            </button>
-            )}
-
-            {(canAct('CHAAL') || canAct('PLAY_BLIND') || canAct('BLIND')) && (
-            <button
-              onClick={() => sendPlayerAction((canAct('PLAY_BLIND') || canAct('BLIND')) ? 'BLIND' : 'CHAAL')}
-              disabled={(!canAct('CHAAL') && !canAct('PLAY_BLIND') && !canAct('BLIND')) || actionLoading}
-              className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <DollarSign className="w-4 h-4" />
-              <span>
-                {canAct('PLAY_BLIND') || canAct('BLIND')
-                  ? `Blind (₹${blindBetRupees.toFixed(2)})`
-                  : `Chaal (₹${chaalBetRupees.toFixed(2) || requiredBetRupees.toFixed(2)})`}
-              </span>
-            </button>
-            )}
-
-            {canAct('RAISE') && (
-            <button
-              onClick={() => sendPlayerAction('RAISE')}
-              disabled={!canAct('RAISE') || actionLoading}
-              className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <ArrowUpRight className="w-4 h-4" />
-              <span>Raise (₹{minRaiseBetRupees.toFixed(2)})</span>
-            </button>
-            )}
-
-            {canAct('SHOW_ACCEPT') && (
-            <button
-              onClick={() => sendPlayerAction('SHOW_ACCEPT')}
-              disabled={actionLoading}
-              className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Accept Show</span>
-            </button>
-            )}
-
-            {canAct('SIDE_SHOW_ACCEPT') && (
-            <button
-              onClick={() => sendPlayerAction('SIDE_SHOW_ACCEPT')}
-              disabled={actionLoading}
-              className="px-4 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-xl"
-            >
-              Accept Side Show
-            </button>
-            )}
-            {canAct('SIDE_SHOW_REJECT') && (
-            <button
-              onClick={() => sendPlayerAction('SIDE_SHOW_REJECT')}
-              disabled={actionLoading}
-              className="px-4 py-2.5 bg-rose-600 text-white font-bold text-xs rounded-xl"
-            >
-              Reject Side Show
-            </button>
-            )}
-
-            {canAct('SIDE_SHOW_REQUEST') && (
-            <button
-              onClick={() => sendPlayerAction('SIDE_SHOW_REQUEST')}
-              disabled={!canAct('SIDE_SHOW_REQUEST') || actionLoading}
-              className="px-4 py-2.5 bg-slate-950 border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <Eye className="w-4 h-4" />
-              <span>Side Show (₹{((gameState?.sideShowCostPaise || gameState?.chaalAmountPaise || 0) / 100).toFixed(0)})</span>
-            </button>
-            )}
-
-            {canAct('SHOW') && (
-            <button
-              onClick={() => sendPlayerAction('SHOW')}
-              disabled={!canAct('SHOW') || actionLoading}
-              className="px-4 py-2.5 bg-slate-950 border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all disabled:opacity-40 cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Show (₹{((gameState?.showCostPaise || gameState?.chaalAmountPaise || 0) / 100).toFixed(0)})</span>
-            </button>
-            )}
-          </div>
+      <div className="absolute inset-x-4 top-[16%] z-40 pointer-events-none flex justify-center">
+        <div className="pointer-events-auto max-w-3xl w-full">
+          <WinnerEffects
+            show={showWinnerBanner}
+            winnerDisplayName={
+              winnerDisplayName
+              || (winnerSnapshot?.winnerUserId || handOutcome?.winnerId
+                ? `Player #${(winnerSnapshot?.winnerUserId || handOutcome?.winnerId).slice(-6)}`
+                : 'Winner')
+            }
+            winnerPayoutRupees={winnerPayoutRupees}
+            winningCategoryLabel={winningCategoryLabel}
+            countdownSeconds={countdownSeconds}
+            status={status}
+            isSelfWinner={winnerSnapshot?.winnerUserId === user?.id}
+            participants={winnerSnapshot?.participants}
+          />
         </div>
       </div>
-      )}
 
-      {!handInProgress && (
-        <div className="relative z-20 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl text-center text-xs text-slate-400">
-          Betting controls unlock when the host starts the game.
-        </div>
-      )}
-
-      {/* Leave Table Confirmation Modal */}
       <AnimatePresence>
         {showLeaveModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl text-center"
+              className="w-full max-w-sm rounded-2xl bg-black/75 backdrop-blur-xl p-6 text-center shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
             >
               <ShieldAlert className="w-12 h-12 text-rose-400 mx-auto mb-2" />
-              <h3 className="text-xl font-bold text-slate-100">Leave Teen Patti Table?</h3>
-              <p className="text-xs text-slate-400 my-2">
+              <h3 className="text-xl font-bold text-white">Leave Teen Patti Table?</h3>
+              <p className="text-xs text-white/60 my-2">
                 Leaving mid-hand will automatically fold your current hand and forfeit any bets placed.
               </p>
-
               <div className="flex gap-2 mt-5">
                 <button
+                  type="button"
                   onClick={() => setShowLeaveModal(false)}
-                  className="flex-1 py-2.5 bg-slate-800 text-slate-300 text-xs font-bold rounded-xl hover:bg-slate-700"
+                  className="flex-1 py-2.5 bg-white/10 text-white text-xs font-bold rounded-xl hover:bg-white/15"
                 >
                   Stay in Game
                 </button>
                 <button
+                  type="button"
                   onClick={handleConfirmLeave}
-                  className="flex-1 py-2.5 bg-rose-600 text-white text-xs font-bold rounded-xl hover:bg-rose-500 shadow-lg shadow-rose-600/20"
+                  className="flex-1 py-2.5 bg-rose-600/90 text-white text-xs font-bold rounded-xl hover:bg-rose-500"
                 >
                   Leave Table
                 </button>
@@ -1453,8 +1333,12 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         )}
       </AnimatePresence>
 
-      {/* Teen Patti Rules & Hand Rankings Modal */}
       <RulebookModal isOpen={showRulebook} onClose={() => setShowRulebook(false)} />
     </div>
   );
+}
+
+function dealActiveLike(status, handInProgress, countdownSeconds) {
+  if (handInProgress) return false;
+  return status === 'WAITING' || status === 'COUNTDOWN' || countdownSeconds > 0;
 }

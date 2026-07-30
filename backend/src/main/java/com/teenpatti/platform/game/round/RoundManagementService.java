@@ -33,6 +33,7 @@ public class RoundManagementService {
     private final WebSocketEventPublisher eventPublisher;
     private final GameBroadcastService gameBroadcastService;
     private final int nextRoundDelaySeconds;
+    private final int winnerDisplaySeconds;
     private final com.teenpatti.platform.table.HostManagementService hostManagementService;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
@@ -44,17 +45,20 @@ public class RoundManagementService {
             WebSocketEventPublisher eventPublisher,
             GameBroadcastService gameBroadcastService,
             com.teenpatti.platform.table.HostManagementService hostManagementService,
-            @Value("${app.game.next-round-delay-seconds:20}") int nextRoundDelaySeconds) {
+            @Value("${app.game.next-round-delay-seconds:60}") int nextRoundDelaySeconds,
+            @Value("${app.game.winner-display-seconds:5}") int winnerDisplaySeconds) {
         this.tableRepository = tableRepository;
         this.gameStartService = gameStartService;
         this.eventPublisher = eventPublisher;
         this.gameBroadcastService = gameBroadcastService;
         this.hostManagementService = hostManagementService;
         this.nextRoundDelaySeconds = Math.max(1, nextRoundDelaySeconds);
+        this.winnerDisplaySeconds = Math.max(0, winnerDisplaySeconds);
     }
 
     /**
      * Called after hand settlement. Does NOT delete the table.
+     * Shows winner for {@code winnerDisplaySeconds}, then starts the next-round countdown.
      */
     public void afterRoundFinished(String tableId) {
         cancelNextRound(tableId);
@@ -66,6 +70,12 @@ public class RoundManagementService {
 
         int seated = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds().size() : 0;
         int minRequired = table.getMinPlayers() > 0 ? table.getMinPlayers() : 3;
+
+        // Stay on ROUND_END (winner banner) — countdown starts only after winner-display delay
+        table.setStatus(TableStatus.ROUND_END);
+        table.setCountdownSeconds(0);
+        table.setUpdatedAt(java.time.Instant.now());
+        tableRepository.save(table);
 
         eventPublisher.publishRoundFinished(tableId, seated >= minRequired ? nextRoundDelaySeconds : 0);
         gameBroadcastService.broadcastTableState(tableId);
@@ -83,7 +93,26 @@ public class RoundManagementService {
             return;
         }
 
-        scheduleNextRound(tableId, nextRoundDelaySeconds);
+        if (winnerDisplaySeconds <= 0) {
+            scheduleNextRound(tableId, nextRoundDelaySeconds);
+            return;
+        }
+
+        ScheduledFuture<?> delayFuture = scheduler.schedule(
+                () -> {
+                    try {
+                        scheduleNextRound(tableId, nextRoundDelaySeconds);
+                    } catch (Exception e) {
+                        log.error("Failed to start next-round countdown after winner display on [{}]: {}",
+                                tableId, e.getMessage());
+                    }
+                },
+                winnerDisplaySeconds,
+                TimeUnit.SECONDS
+        );
+        nextRoundTasks.put(tableId, delayFuture);
+        log.info("Winner display for {}s on table [{}], then {}s next-round countdown",
+                winnerDisplaySeconds, tableId, nextRoundDelaySeconds);
     }
 
     /**
@@ -128,6 +157,12 @@ public class RoundManagementService {
     }
 
     private void scheduleNextRound(String tableId, int delaySeconds) {
+        // Drop completed winner-display delay (if any) without treating it as an active tick
+        ScheduledFuture<?> prior = nextRoundTasks.remove(tableId);
+        if (prior != null && !prior.isDone()) {
+            prior.cancel(false);
+        }
+
         Table table = tableRepository.findById(tableId).orElse(null);
         if (table == null) {
             return;

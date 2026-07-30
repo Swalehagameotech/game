@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   PlusCircle, Key, Users, Trophy, Play, Lock, RefreshCw, AlertCircle,
   ShieldCheck, Coins, Flame, Crown, Zap, Activity, Clock, History, Bell,
-  ArrowUpRight, ArrowDownRight, Radio, Sparkles
+  ArrowUpRight, ArrowDownRight, Radio, Sparkles, Home, ShoppingCart,
+  HelpCircle, Gift, UserPlus, User as UserIcon,
 } from 'lucide-react';
 import axiosClient from '@/shared/api/axiosClient';
 import { LOBBY_REFRESH_EVENTS } from '@/shared/api/realtimeEvents';
@@ -12,6 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useGame } from '@/context/GameContext';
 import { getNotificationDisplayLabel } from '@/features/notifications/notificationUtils';
 import { isActiveHandStatus, getTableStatusLabel, normalizeGameState, isCountdownStatus, isJoinableStatus } from '@/features/table/tableUtils';
+import HomeCasinoScreen from './HomeCasinoScreen';
 
 function formatHistoryDate(isoString) {
   if (!isoString) return '';
@@ -27,7 +29,13 @@ function formatWinningCategory(category, description, foldWin) {
   return category.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
+export default function LobbyView({
+  onJoinTable,
+  onOpenAuth,
+  onOpenWallet,
+  onOpenLeaderboard,
+  onOpenProfile,
+}) {
   const { user, isAuthenticated, refreshWalletBalance } = useAuth();
   const { updateTableState, notifications: liveNotifications } = useGame();
 
@@ -323,409 +331,38 @@ export default function LobbyView({ onJoinTable, onOpenAuth, onOpenWallet }) {
   ].slice(0, 5);
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* 1. Real-Time Platform Live Stats Header Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">ONLINE PLAYERS</span>
-            <span className="text-base font-black text-slate-100 font-mono">{liveStats.onlinePlayers} Live</span>
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center">
-            <Flame className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">RUNNING TABLES</span>
-            <span className="text-base font-black text-cyan-400 font-mono">{liveStats.runningTablesCount} Active</span>
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
-            <Users className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">WAITING ROOMS</span>
-            <span className="text-base font-black text-amber-400 font-mono">{liveStats.waitingTablesCount} Waiting</span>
-          </div>
-        </div>
-
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
-            <Trophy className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">TOTAL GAMES</span>
-            <span className="text-base font-black text-slate-100 font-mono">{liveStats.totalActiveGames} Total</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Active Game Resume Banner (Detected automatically if user is seated) */}
-      {activeGame && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-amber-500/20 via-amber-600/20 to-emerald-600/20 border-2 border-amber-500/60 rounded-3xl p-5 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4"
-        >
-          <div className="flex items-center gap-4 text-center sm:text-left">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black text-2xl shadow-lg shrink-0">
-              ♠
-            </div>
-            <div>
-              <div className="flex items-center justify-center sm:justify-start gap-2 mb-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                <span className="text-xs font-black uppercase text-amber-400 tracking-wider">ACTIVE MATCH IN PROGRESS</span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-100">
-                You are currently seated at <span className="text-amber-400">{activeGame.tableName}</span> ({activeGame.seatedCount}/{activeGame.maxPlayers} Players)
-              </h3>
-            </div>
-          </div>
-
-          <button
-            onClick={() => onJoinTable(activeGame.tableId)}
-            className="px-6 py-3 bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-sm rounded-2xl shadow-xl hover:from-amber-300 hover:to-amber-400 flex items-center gap-2 cursor-pointer transition-all shrink-0"
-          >
-            <Play className="w-4 h-4 fill-current" />
-            <span>Resume Game Now</span>
-          </button>
-        </motion.div>
-      )}
-
-      {/* 2b. Private Table Invitations */}
-      {privateInvitations.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-5 shadow-xl"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Lock className="w-5 h-5 text-amber-400" />
-            <h3 className="text-base font-black text-slate-100">Private Table Invitations</h3>
-            <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-              {privateInvitations.length} Pending
-            </span>
-          </div>
-          <div className="space-y-3">
-            {privateInvitations.map((invite) => (
-              <div
-                key={invite.notificationId || invite.tableId}
-                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-950/60 border border-slate-800 rounded-2xl"
-              >
-                <div>
-                  <p className="text-sm font-bold text-slate-100">
-                    {invite.hostDisplayName || 'Host'} invited you to{' '}
-                    <span className="text-amber-400">{invite.tableName || 'Private Table'}</span>
-                  </p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Code: <span className="font-mono text-amber-300">{invite.inviteCode}</span>
-                    {' · '}
-                    {invite.currentPlayerCount}/{invite.maxPlayers} players
-                    {' · '}
-                    Boot ₹{((invite.bootAmountPaise || 0) / 100).toFixed(0)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleAcceptPrivateInvite(invite)}
-                  className="px-4 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shrink-0"
-                >
-                  Accept & Join
-                </button>
-              </div>
-            ))}
-          </div>
-        </motion.div>
-      )}
-
-      {/* 3. Hero & Control Header Bar */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950/40 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
-        <div className="absolute -right-12 -top-12 w-64 h-64 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold mb-3">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Real-Money Teen Patti Room Lobby</span>
-            </div>
-            <h2 className="text-2xl md:text-3xl font-black text-slate-100 tracking-tight">
-              Welcome Back, <span className="text-amber-400">{user?.displayName || 'Player'}</span>
-            </h2>
-            <p className="text-xs md:text-sm text-slate-400 mt-1 max-w-xl">
-              Join active public rooms, create private invite tables, or click Quick Play for instant matchmaking!
-            </p>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => {
-                setCreateTableType('PUBLIC');
-                setCreatedPrivateCode(null);
-                setShowCreateModal(true);
-              }}
-              className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-500/20 hover:from-emerald-400 hover:to-teal-400 flex items-center gap-2 transition-all cursor-pointer"
-            >
-              <PlusCircle className="w-4 h-4 text-slate-950" />
-              <span>Create Public Table</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setCreateTableType('PRIVATE');
-                setCreatedPrivateCode(null);
-                setShowCreateModal(true);
-              }}
-              className="px-4 py-3 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-500 flex items-center gap-2 transition-all cursor-pointer"
-            >
-              <Lock className="w-4 h-4 text-slate-950" />
-              <span>Create Private Room</span>
-            </button>
-
-            <button
-              onClick={() => setShowJoinPrivateModal(true)}
-              className="px-4 py-3 bg-slate-950 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl hover:border-amber-500/50 flex items-center gap-2 transition-all cursor-pointer"
-            >
-              <Key className="w-4 h-4 text-amber-400" />
-              <span>Join with Code</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. Quick Play Single-Click Matchmaking Bar */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Zap className="w-5 h-5 text-amber-400 animate-bounce" />
-            <h3 className="text-base font-black text-slate-100">Quick Play (1-Click Instant Match)</h3>
-          </div>
-          <span className="text-[10px] text-slate-400 font-mono">Auto-Finds Open Room or Creates Table</span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {bootOptionsPaise.map((bootPaise, idx) => (
-            <button
-              key={bootPaise}
-              onClick={() => handleQuickPlay(bootPaise)}
-              disabled={quickPlayLoading === bootPaise}
-              className="p-4 rounded-2xl bg-gradient-to-b from-slate-950 to-slate-900 border border-slate-800 hover:border-amber-500/60 transition-all text-center group cursor-pointer shadow-md relative overflow-hidden"
-            >
-              <span className="text-[10px] text-amber-400 font-extrabold uppercase block mb-1">
-                {idx === 0 ? 'Configured Boot' : 'Configured'}
-              </span>
-              <span className="text-xl font-black text-slate-100 group-hover:text-amber-400 transition-colors">
-                ₹{(bootPaise / 100).toFixed(0)}
-              </span>
-              <span className="text-[9px] text-slate-500 block mt-1 font-mono">BOOT STAKE</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {error && (
-        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-400 text-sm flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <span>{error}</span>
-          </div>
-          <button onClick={() => setError('')} className="text-xs underline text-rose-300 hover:text-rose-100">Dismiss</button>
-        </div>
-      )}
-
-      {/* 5. Public Tables Section Header & Filter Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-        <div className="flex items-center gap-2">
-          <Trophy className="w-5 h-5 text-amber-400" />
-          <h3 className="text-lg font-black text-slate-100">Live Active Public Tables</h3>
-        </div>
-
-        <button
-          onClick={fetchHomeDashboard}
-          disabled={loading}
-          className="text-xs font-semibold text-slate-400 hover:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh List</span>
-        </button>
-      </div>
-
-      {/* 6. Active Public Tables Grid (Driven 100% by Backend Data & WebSockets) */}
-      {tables.length === 0 ? (
-        <div className="text-center py-16 bg-slate-900/50 border border-slate-800/80 rounded-3xl p-8">
-          <Trophy className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <h3 className="text-lg font-bold text-slate-300">No Active Public Tables Found</h3>
-          <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-            Be the first to create a public table or private room to start playing!
-          </p>
-          <button
-            onClick={() => { setShowCreateModal(true); setCreatedPrivateCode(null); }}
-            className="mt-4 px-5 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 hover:bg-amber-400 transition-all cursor-pointer"
-          >
-            Create Table Now
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {tables.map((table) => {
-            const bootRupees = ((table.bootAmountPaise || table.bootAmount || 1000) / 100).toFixed(0);
-            const currentPlayers = table.seatedPlayerIds ? table.seatedPlayerIds.length : table.currentPlayerCount || 0;
-            const maxPlayers = table.maxPlayers || 6;
-            const isFull = currentPlayers >= maxPlayers;
-            const countdownSeconds = table.countdownSeconds ?? 0;
-            const isCountdown = isCountdownStatus(table.status, countdownSeconds);
-            const canJoin = !isFull && !isActiveHandStatus(table.status) && !isCountdown && isJoinableStatus(table.status);
-
-            return (
-              <motion.div
-                key={table.id || table.tableId}
-                whileHover={{ y: -4 }}
-                className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between relative overflow-hidden group hover:border-amber-500/40 transition-all"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      BOOT ₹{bootRupees}
-                    </span>
-
-                    <span className={`text-xs font-mono flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-all ${
-                      currentPlayers > 0
-                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 font-black animate-pulse'
-                        : 'text-slate-500 border-transparent font-semibold'
-                    }`}>
-                      <Users className={`w-3.5 h-3.5 ${currentPlayers > 0 ? 'text-emerald-400' : 'text-slate-400'}`} />
-                      <span>{currentPlayers}/{maxPlayers} Players</span>
-                    </span>
-                  </div>
-
-                  <h4 className="font-bold text-slate-100 text-lg flex items-center justify-between">
-                    <span>{table.tableName || `Table #${(table.tableId || table.id || 'PUBLIC').slice(-6).toUpperCase()}`}</span>
-                    {table.privateTable && <Lock className="w-4 h-4 text-amber-400" />}
-                  </h4>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/60">
-                    <div>
-                      <span className="text-slate-500 block text-[10px] font-bold uppercase">BOOT AMOUNT</span>
-                      <span className="font-bold text-amber-400 text-sm">₹{bootRupees}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block text-[10px] font-bold uppercase">STATUS</span>
-                      <span className={`font-extrabold text-xs uppercase ${
-                        isCountdown ? 'text-rose-400 animate-pulse'
-                          : isActiveHandStatus(table.status) ? 'text-cyan-400' : 'text-amber-400'
-                      }`}>
-                        {isCountdown ? `STARTING ${countdownSeconds}s` : getTableStatusLabel(table.status)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => handleJoinTableClick(table.id || table.tableId)}
-                  disabled={!canJoin}
-                  className={`mt-5 w-full py-2.5 px-4 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                    isActiveHandStatus(table.status)
-                      ? 'bg-cyan-950/40 text-cyan-400 border border-cyan-500/30 cursor-not-allowed'
-                      : isCountdown
-                      ? 'bg-rose-950/40 text-rose-300 border border-rose-500/30 cursor-not-allowed'
-                      : isFull
-                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-600/20 hover:from-emerald-500 hover:to-teal-500'
-                  }`}
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>
-                    {isActiveHandStatus(table.status)
-                      ? 'Game Running'
-                      : isCountdown
-                      ? `Starting in ${countdownSeconds}s`
-                      : isFull
-                      ? `Table Full (${maxPlayers}/${maxPlayers})`
-                      : 'Join Table'}
-                  </span>
-                </button>
-              </motion.div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 7. Game History & Live Notifications Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-        {/* Game History List */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl">
-          <div className="flex items-center gap-2 mb-4">
-            <History className="w-5 h-5 text-amber-400" />
-            <h3 className="text-base font-black text-slate-100">Recent Game History</h3>
-          </div>
-
-          {recentHistory.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-500">No game history items recorded yet. Join a match to record games!</div>
-          ) : (
-            <div className="space-y-2.5">
-              {recentHistory.map((item) => (
-                <div key={item.id || item.gameId} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 flex items-center justify-between gap-3 text-xs">
-                  <div className="min-w-0">
-                    <span className="font-bold text-slate-200 block truncate">{item.tableName}</span>
-                    <span className="text-[10px] text-slate-500 font-mono block truncate">
-                      {item.gameId}{item.variant ? ` · ${item.variant}` : ''}{item.playerCount ? ` · ${item.playerCount} players` : ''}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                      {formatWinningCategory(item.winningCategory, item.winningHandDescription, item.foldWin)}
-                    </span>
-                    <span className="text-[9px] text-slate-600 block">{formatHistoryDate(item.playedAt)}</span>
-                  </div>
-                  <div className="text-right shrink-0">
-                    {item.result === 'WON' ? (
-                      <>
-                        <span className="font-extrabold block text-emerald-400">
-                          +₹{((item.winningAmountPaise ?? item.winnerPayoutPaise ?? 0) / 100).toFixed(2)}
-                        </span>
-                        <span className="text-[9px] text-slate-500">Pot ₹{((item.potAmountPaise ?? 0) / 100).toFixed(2)}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-extrabold block text-rose-400">LOST</span>
-                        <span className="text-[9px] text-slate-500">Pot ₹{((item.potAmountPaise ?? 0) / 100).toFixed(2)}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Live STOMP Notifications Feed */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl">
-          <div className="flex items-center gap-2 mb-4">
-            <Bell className="w-5 h-5 text-amber-400" />
-            <h3 className="text-base font-black text-slate-100">Live System Notifications</h3>
-          </div>
-
-          {notifications.length === 0 ? (
-            <div className="text-center py-8 text-xs text-slate-500">No recent notifications. Live events will display here automatically!</div>
-          ) : (
-            <div className="space-y-2.5">
-              {notifications.slice(0, 5).map((n) => (
-                <div key={n.id || n.message} className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800/80 text-xs flex items-start gap-2.5">
-                  <div className="w-2 h-2 rounded-full bg-amber-400 mt-1 shrink-0" />
-                  <div>
-                    <span className="font-bold text-slate-200 block">{getNotificationDisplayLabel(n)}</span>
-                    <p className="text-slate-400 text-[11px] mt-0.5">{n.message}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+    <div>
+      <HomeCasinoScreen
+        user={user}
+        tables={tables}
+        bootOptionsPaise={bootOptionsPaise}
+        loading={loading}
+        error={error}
+        setError={setError}
+        activeGame={activeGame}
+        privateInvitations={privateInvitations}
+        quickPlayLoading={quickPlayLoading}
+        onQuickPlay={handleQuickPlay}
+        onJoinTable={onJoinTable}
+        onJoinTableClick={handleJoinTableClick}
+        onOpenCreatePublic={() => {
+          setCreateTableType('PUBLIC');
+          setCreatedPrivateCode(null);
+          setShowCreateModal(true);
+        }}
+        onOpenCreatePrivate={() => {
+          setCreateTableType('PRIVATE');
+          setCreatedPrivateCode(null);
+          setShowCreateModal(true);
+        }}
+        onOpenJoinCode={() => setShowJoinPrivateModal(true)}
+        onAcceptInvite={handleAcceptPrivateInvite}
+        onRefresh={fetchHomeDashboard}
+        onOpenWallet={onOpenWallet}
+        onOpenLeaderboard={onOpenLeaderboard}
+        onOpenProfile={onOpenProfile}
+        onResumeGame={onJoinTable}
+      />
 
       {/* Create Table Modal */}
       <AnimatePresence>

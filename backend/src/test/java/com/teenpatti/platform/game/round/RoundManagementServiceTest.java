@@ -37,7 +37,7 @@ class RoundManagementServiceTest {
         var hostManagementService = mock(com.teenpatti.platform.table.HostManagementService.class);
         roundManagementService = new RoundManagementService(
                 tableRepository, gameStartService, eventPublisher, gameBroadcastService,
-                hostManagementService, 5);
+                hostManagementService, 5, 0);
     }
 
     @Test

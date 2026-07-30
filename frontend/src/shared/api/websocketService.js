@@ -3,7 +3,7 @@ class WebSocketGameService {
     this.socket = null;
     this.listeners = new Set();
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 20;
     this.reconnectInterval = 2000;
     this.pendingMessages = [];
     this.openListeners = new Set();

@@ -1,7 +1,14 @@
 export const ACTIVE_HAND_STATUSES = ['RUNNING', 'IN_PROGRESS', 'PLAYING', 'SHOW', 'STARTING'];
 
+/** Statuses where cards are dealt / visible (not STARTING / waiting). */
+export const DEALABLE_HAND_STATUSES = ['RUNNING', 'IN_PROGRESS', 'PLAYING', 'SHOW'];
+
 export function isActiveHandStatus(status) {
   return ACTIVE_HAND_STATUSES.includes(status);
+}
+
+export function isDealableHandStatus(status) {
+  return DEALABLE_HAND_STATUSES.includes(status);
 }
 
 export function isJoinableStatus(status) {
@@ -258,25 +265,67 @@ export function mergeGameState(prev, incoming, user, options = {}) {
     inviteCode: next.inviteCode ?? prev.inviteCode,
   };
 
-  if (isActiveHandStatus(merged.status)) {
-    if (hasOwn(incoming, 'winnerSnapshot')) {
-      merged.winnerSnapshot = next.winnerSnapshot;
-    } else if (!options.keepWinner) {
-      merged.winnerSnapshot = null;
-      merged.handOutcome = hasOwn(incoming, 'handOutcome') ? next.handOutcome : null;
-    }
-    if (!myTurnExplicit) {
-      merged.myTurn = Boolean(merged.currentTurnPlayerId && user?.id && merged.currentTurnPlayerId === user.id)
-        || (merged.pendingShow?.targetId === user?.id
-          && (merged.allowedActions || []).includes('SHOW_ACCEPT'))
-        || (merged.pendingSideShow?.targetId === user?.id);
+  // Only clear winner on a true new-hand reset — never on every RUNNING tick
+  if (options.forceResetHands) {
+    if (!hasOwn(incoming, 'winnerSnapshot')) merged.winnerSnapshot = null;
+    if (!hasOwn(incoming, 'handOutcome')) merged.handOutcome = null;
+    if (!hasOwn(incoming, 'pendingShow')) merged.pendingShow = null;
+    if (!hasOwn(incoming, 'revealedHands')) merged.revealedHands = null;
+  } else if (isActiveHandStatus(merged.status) && hasOwn(incoming, 'winnerSnapshot')) {
+    merged.winnerSnapshot = next.winnerSnapshot;
+  }
+
+  if (isActiveHandStatus(merged.status) && !myTurnExplicit) {
+    merged.myTurn = Boolean(merged.currentTurnPlayerId && user?.id && merged.currentTurnPlayerId === user.id)
+      || (merged.pendingShow?.targetId === user?.id
+        && (merged.allowedActions || []).includes('SHOW_ACCEPT'))
+      || (merged.pendingSideShow?.targetId === user?.id);
+  }
+
+  const endStatuses = ['ROUND_END', 'WAITING', 'NEXT_ROUND', 'CLOSED'];
+
+  // Keep pending Show across racing STATE_UPDATE (often sends pendingShow: null) / BETTING patches
+  if (prev?.pendingShow && !options.clearPendingShow && !options.forceResetHands) {
+    const incomingClearedShow = hasOwn(incoming, 'pendingShow') && incoming.pendingShow == null;
+    const incomingOmittedShow = !hasOwn(incoming, 'pendingShow');
+    if (endStatuses.includes(merged.status)) {
+      merged.pendingShow = null;
+    } else if (incomingClearedShow || incomingOmittedShow) {
+      // Ignore null/omitted pendingShow from projections — only clearPendingShow ends it
+      merged.pendingShow = prev.pendingShow;
+      if (prev.status === 'SHOW' && (!hasOwn(incoming, 'status')
+        || incoming.status === 'RUNNING'
+        || incoming.status === 'SHOW')) {
+        merged.status = 'SHOW';
+      }
     }
   }
 
-  // Clear pending show once we've left SHOW (unless incoming explicitly sets it).
-  if (hasOwn(incoming, 'status') && incoming.status && incoming.status !== 'SHOW'
-      && !hasOwn(incoming, 'pendingShow')) {
+  if (options.clearPendingShow) {
     merged.pendingShow = null;
+  }
+
+  // Target must always be able to Accept while Show is pending
+  if (merged.pendingShow?.targetId && user?.id
+    && String(merged.pendingShow.targetId) === String(user.id)
+    && !endStatuses.includes(merged.status)) {
+    const actions = new Set(merged.allowedActions || []);
+    actions.add('SHOW_ACCEPT');
+    merged.allowedActions = [...actions];
+    merged.myTurn = true;
+    if (merged.status !== 'SHOW') merged.status = 'SHOW';
+  }
+
+  // Preserve winner across ROUND_END → NEXT_ROUND until next hand reset
+  if (prev?.winnerSnapshot && !options.forceResetHands) {
+    const keepStatuses = ['ROUND_END', 'WAITING', 'NEXT_ROUND', 'CLOSED', 'SHOW'];
+    const incomingClearedWinner = hasOwn(incoming, 'winnerSnapshot') && incoming.winnerSnapshot == null;
+    const incomingOmittedWinner = !hasOwn(incoming, 'winnerSnapshot');
+    if ((incomingClearedWinner || incomingOmittedWinner)
+      && (keepStatuses.includes(merged.status) || keepStatuses.includes(prev.status))) {
+      merged.winnerSnapshot = prev.winnerSnapshot;
+      if (prev.handOutcome && !merged.handOutcome) merged.handOutcome = prev.handOutcome;
+    }
   }
 
   if (
@@ -285,15 +334,26 @@ export function mergeGameState(prev, incoming, user, options = {}) {
     && prev.currentTurnPlayerId === merged.currentTurnPlayerId
     && prev.myTurn === merged.myTurn
     && prev.turnSecondsRemaining === merged.turnSecondsRemaining
+    && prev.turnDeadlineAt === merged.turnDeadlineAt
+    && prev.requiredBetPaise === merged.requiredBetPaise
+    && prev.minRaiseBetPaise === merged.minRaiseBetPaise
+    && prev.walletBalancePaise === merged.walletBalancePaise
+    && prev.blindAmountPaise === merged.blindAmountPaise
+    && prev.chaalAmountPaise === merged.chaalAmountPaise
+    && prev.currentBaseStakePaise === merged.currentBaseStakePaise
     && prev.dealerSeatIndex === merged.dealerSeatIndex
     && prev.hostId === merged.hostId
     && prev.countdownSeconds === merged.countdownSeconds
     && JSON.stringify(prev.allowedActions) === JSON.stringify(merged.allowedActions)
     && JSON.stringify(prev.players) === JSON.stringify(merged.players)
     && JSON.stringify(prev.seenPlayerIds) === JSON.stringify(merged.seenPlayerIds)
+    && JSON.stringify(prev.blindPlayerIds) === JSON.stringify(merged.blindPlayerIds)
+    && JSON.stringify(prev.packedPlayerIds) === JSON.stringify(merged.packedPlayerIds)
     && JSON.stringify(prev.pendingShow) === JSON.stringify(merged.pendingShow)
+    && JSON.stringify(prev.pendingSideShow) === JSON.stringify(merged.pendingSideShow)
     && JSON.stringify(prev.winnerSnapshot) === JSON.stringify(merged.winnerSnapshot)
     && JSON.stringify(prev.revealedHands) === JSON.stringify(merged.revealedHands)
+    && JSON.stringify(prev.raiseOptionsPaise) === JSON.stringify(merged.raiseOptionsPaise)
   ) {
     return prev;
   }
@@ -374,6 +434,8 @@ export function normalizeGameState(data, user) {
     myTurn,
     allowedActions: data.allowedActions || [],
     winnerSnapshot: data.winnerSnapshot ?? null,
+    handOutcome: data.handOutcome ?? null,
+    pendingShow: hasOwn(data, 'pendingShow') ? data.pendingShow : undefined,
     disconnectedPlayerIds: data.disconnectedPlayerIds || [],
   };
 }
