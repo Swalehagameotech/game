@@ -107,6 +107,11 @@ export default function ActionBar({
   sideShowCost,
   showCost,
   wsError,
+  variantPhase,
+  auctionHighBidPaise,
+  auctionMinBidPaise,
+  myCards,
+  onDiscardCard,
 }) {
   const blindEnabled = canAct('PLAY_BLIND') || canAct('BLIND');
   const chaalEnabled = canAct('CHAAL');
@@ -115,9 +120,19 @@ export default function ActionBar({
   const sideEnabled = canAct('SIDE_SHOW_REQUEST');
   const showEnabled = canAct('SHOW');
   const raiseEnabled = canAct('RAISE');
+  const discardEnabled = canAct('DISCARD_CARD');
+  const auctionBidEnabled = canAct('AUCTION_BID');
+  const auctionPassEnabled = canAct('AUCTION_PASS');
   const showAccept = canAct('SHOW_ACCEPT');
+  const showReject = canAct('SHOW_REJECT');
   const sideAccept = canAct('SIDE_SHOW_ACCEPT');
   const sideReject = canAct('SIDE_SHOW_REJECT');
+
+  const auctionMinRupees = (auctionMinBidPaise || 0) / 100;
+  const auctionHighRupees = (auctionHighBidPaise || 0) / 100;
+  const suggestedBidRupees = auctionHighRupees > 0
+    ? auctionHighRupees + (blindBetRupees || auctionMinRupees || 1)
+    : (auctionMinRupees || blindBetRupees || 1);
 
   return (
     <div className="relative z-30 w-full">
@@ -125,7 +140,63 @@ export default function ActionBar({
         <div className="mb-2 text-center text-xs text-rose-300 font-semibold drop-shadow-md">{wsError}</div>
       )}
 
-      {(showAccept || sideAccept || sideReject) && (
+      {variantPhase === 'DISCARD' && discardEnabled && (
+        <div className="mb-3 text-center">
+          <p className="text-[11px] text-[#f5e6a8] font-bold uppercase tracking-wide mb-2 drop-shadow">
+            Discard one card
+          </p>
+          {Array.isArray(myCards) && myCards.length > 3 ? (
+            <div className="flex flex-wrap justify-center gap-2">
+              {myCards.map((card, idx) => (
+                <button
+                  key={`discard-${idx}`}
+                  type="button"
+                  disabled={actionLoading}
+                  onClick={() => onDiscardCard ? onDiscardCard(idx) : sendPlayerAction('DISCARD_CARD', 1, { cardIndex: idx })}
+                  className="px-3 py-1.5 rounded-lg bg-black/50 text-white text-xs font-bold border border-[#d4af37]/60 hover:bg-[#d4af37]/20 disabled:opacity-40"
+                >
+                  {card?.rank || card?.value || `Card ${idx + 1}`}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-white/70">See your cards, then pick one to discard</p>
+          )}
+        </div>
+      )}
+
+      {variantPhase === 'AUCTION' && (auctionBidEnabled || auctionPassEnabled) && (
+        <div className="mb-3 flex flex-wrap justify-center gap-3 items-center">
+          <p className="text-[10px] text-white/80 drop-shadow">
+            Auction · High: ₹{auctionHighRupees.toFixed(0)} · Min bid: ₹{auctionMinRupees.toFixed(0)}
+          </p>
+          {auctionBidEnabled && (
+            <ActionBtn
+              label={`Bid ₹${Number(suggestedBidRupees).toFixed(0)}`}
+              onClick={() => sendPlayerAction('AUCTION_BID', 1, { amountPaise: Math.round(suggestedBidRupees * 100) })}
+              disabled={actionLoading}
+              bg={THEME.chaal.bg}
+              rim={THEME.chaal.rim}
+              glow={THEME.chaal.glow}
+              dark
+              icon={<ChipIcon />}
+            />
+          )}
+          {auctionPassEnabled && (
+            <ActionBtn
+              label="Pass"
+              onClick={() => sendPlayerAction('AUCTION_PASS')}
+              disabled={actionLoading}
+              bg={THEME.pack.bg}
+              rim={THEME.pack.rim}
+              glow={THEME.pack.glow}
+              icon={<X className="w-4 h-4" />}
+            />
+          )}
+        </div>
+      )}
+
+      {(showAccept || showReject || sideAccept || sideReject) && (
         <div className="mb-3 flex flex-wrap justify-center gap-3">
           {showAccept && (
             <ActionBtn
@@ -137,6 +208,17 @@ export default function ActionBar({
               glow={THEME.show.glow}
               dark
               icon={<Sparkles className="w-4 h-4" />}
+            />
+          )}
+          {showReject && (
+            <ActionBtn
+              label="Decline Show"
+              onClick={() => sendPlayerAction('SHOW_REJECT')}
+              disabled={actionLoading}
+              bg={THEME.pack.bg}
+              rim={THEME.pack.rim}
+              glow={THEME.pack.glow}
+              icon={<X className="w-4 h-4" />}
             />
           )}
           {sideAccept && (
@@ -165,6 +247,8 @@ export default function ActionBar({
       )}
 
       <div className="flex flex-nowrap items-center justify-center gap-3 sm:gap-4 px-2 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {!(variantPhase === 'DISCARD' && discardEnabled) && !(variantPhase === 'AUCTION' && (auctionBidEnabled || auctionPassEnabled)) && (
+        <>
         <ActionBtn
           label="Blind"
           onClick={() => sendPlayerAction('BLIND')}
@@ -236,6 +320,8 @@ export default function ActionBar({
           dark
           icon={<Sparkles className="w-4 h-4" />}
         />
+        </>
+        )}
       </div>
 
       {(sideEnabled || showEnabled) && (

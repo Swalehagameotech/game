@@ -4,6 +4,7 @@ import com.teenpatti.platform.common.exception.InsufficientBalanceException;
 import com.teenpatti.platform.game.engine.BettingRoundEngine;
 import com.teenpatti.platform.game.engine.GameEngineConfig;
 import com.teenpatti.platform.game.engine.PlayerStatus;
+import com.teenpatti.platform.game.variant.VariantPhaseTracker;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.transaction.LedgerEntryType;
 import com.teenpatti.platform.wallet.WalletService;
@@ -29,6 +30,7 @@ public class BettingLogicService {
     private final WalletService walletService;
     private final WebSocketEventPublisher eventPublisher;
     private final com.teenpatti.platform.game.engine.HandContextManager handContextManager;
+    private final VariantPhaseTracker variantPhaseTracker;
 
     public BettingState buildBettingState(Table table, BettingRoundEngine engine, String userId) {
         if (table == null || engine == null || userId == null) {
@@ -57,7 +59,11 @@ public class BettingLogicService {
         List<String> allowed = resolveAllowedActions(table.getId(), engine, userId);
         allowed = filterAffordableActions(allowed, engine, userId, walletBalance);
         if (allowed.contains("SHOW_ACCEPT") || allowed.contains("SIDE_SHOW_ACCEPT")
-                || allowed.contains("SIDE_SHOW_REJECT")) {
+                || allowed.contains("SIDE_SHOW_REJECT") || allowed.contains("SHOW_REJECT")) {
+            myTurn = true;
+        }
+        if (allowed.contains("DISCARD_CARD") || allowed.contains("AUCTION_BID")
+                || allowed.contains("AUCTION_PASS")) {
             myTurn = true;
         }
 
@@ -81,6 +87,10 @@ public class BettingLogicService {
                 .turnTimerSeconds(turnTimerSeconds)
                 .myTurn(myTurn)
                 .allowedActions(allowed)
+                .variantPhase(resolveVariantPhaseLabel(table.getId()))
+                .auctionHighBidPaise(resolveAuctionHighBid(table.getId()))
+                .auctionHighBidderId(resolveAuctionHighBidder(table.getId()))
+                .auctionMinBidPaise(resolveAuctionMinBid(table.getId()))
                 .build();
     }
 
@@ -177,12 +187,34 @@ public class BettingLogicService {
             return actions;
         }
 
+        // Pre-betting variant phases gate normal betting actions.
+        if (tableId != null && variantPhaseTracker.isDiscardPhase(tableId)) {
+            if (variantPhaseTracker.hasPendingDiscard(tableId, userId)) {
+                actions.add("DISCARD_CARD");
+            }
+            if (status == PlayerStatus.BLIND) {
+                actions.add("SEE_CARDS");
+            }
+            return actions;
+        }
+        if (tableId != null && variantPhaseTracker.isAuctionPhase(tableId)) {
+            if (variantPhaseTracker.canActInAuction(tableId, userId)) {
+                actions.add("AUCTION_BID");
+                actions.add("AUCTION_PASS");
+            }
+            if (status == PlayerStatus.BLIND) {
+                actions.add("SEE_CARDS");
+            }
+            return actions;
+        }
+
         // Pending side-show: only the target may Accept/Reject.
         if (tableId != null) {
             var pendingShow = handContextManager.getPendingShow(tableId);
             if (pendingShow.isPresent()) {
                 if (userId.equals(pendingShow.get().targetId())) {
                     actions.add("SHOW_ACCEPT");
+                    actions.add("SHOW_REJECT");
                 }
                 return actions;
             }
@@ -242,7 +274,9 @@ public class BettingLogicService {
         for (String action : actions) {
             if ("PACK".equals(action) || "SEE_CARDS".equals(action)
                     || "SIDE_SHOW_ACCEPT".equals(action) || "SIDE_SHOW_REJECT".equals(action)
-                    || "SHOW_ACCEPT".equals(action)) {
+                    || "SHOW_ACCEPT".equals(action) || "SHOW_REJECT".equals(action)
+                    || "DISCARD_CARD".equals(action)
+                    || "AUCTION_PASS".equals(action)) {
                 out.add(action);
                 continue;
             }
@@ -381,5 +415,31 @@ public class BettingLogicService {
             return "PLAY_BLIND";
         }
         return upper;
+    }
+
+    private String resolveVariantPhaseLabel(String tableId) {
+        if (tableId == null) {
+            return null;
+        }
+        com.teenpatti.platform.game.variant.PreBettingPhase phase = variantPhaseTracker.getPhase(tableId);
+        return phase == com.teenpatti.platform.game.variant.PreBettingPhase.NONE ? null : phase.name();
+    }
+
+    private long resolveAuctionHighBid(String tableId) {
+        return variantPhaseTracker.getAuctionSnapshot(tableId)
+                .map(VariantPhaseTracker.AuctionSnapshot::highBidPaise)
+                .orElse(0L);
+    }
+
+    private String resolveAuctionHighBidder(String tableId) {
+        return variantPhaseTracker.getAuctionSnapshot(tableId)
+                .map(VariantPhaseTracker.AuctionSnapshot::highBidderId)
+                .orElse(null);
+    }
+
+    private long resolveAuctionMinBid(String tableId) {
+        return variantPhaseTracker.getAuctionSnapshot(tableId)
+                .map(VariantPhaseTracker.AuctionSnapshot::minBidPaise)
+                .orElse(0L);
     }
 }

@@ -37,7 +37,7 @@ public class CreatePrivateTableRequest {
 
     private Long bootAmount;
 
-    private String gameVariant; // HIGHER, MEDIUM, LOWER
+    private String gameVariant; // CLASSIC, AK47, JOKER, MUFLIS, ...
 
     /** Optional user IDs to receive in-app GAME_INVITE notifications. */
     private List<String> inviteUserIds;

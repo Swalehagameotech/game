@@ -28,7 +28,9 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private static final Set<String> ALLOWED_WS_ACTIONS = Set.of(
             "PLAY_BLIND", "BLIND", "SEE_CARDS", "CHAAL", "CALL", "RAISE", "PACK", "SHOW",
-            "SHOW_ACCEPT", "SIDE_SHOW_REQUEST", "SIDE_SHOW_ACCEPT", "SIDE_SHOW_REJECT"
+            "SHOW_ACCEPT", "SHOW_REJECT", "SHOW_DECLINE",
+            "SIDE_SHOW_REQUEST", "SIDE_SHOW_ACCEPT", "SIDE_SHOW_REJECT",
+            "DISCARD_CARD", "AUCTION_BID", "AUCTION_PASS"
     );
 
     private final ObjectMapper objectMapper;
@@ -93,8 +95,9 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         String userId = (String) session.getAttributes().get("userId");
         if (userId != null) {
             String tableId = sessionRegistry.getTableIdForUser(userId);
-            sessionRegistry.unregisterUserSession(userId);
-            if (tableId != null) {
+            sessionRegistry.unregisterUserSession(userId, session);
+            // Only start disconnect grace if this user truly has no live socket left.
+            if (tableId != null && !sessionRegistry.isUserConnected(userId)) {
                 disconnectGracePeriodManager.handleDisconnect(userId, tableId, () -> handleAutoFoldOnTurn(userId, tableId));
             }
         }
@@ -154,7 +157,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
             }
 
             String rejection = gameEngineService.processAction(
-                    tableId, userId, msg.getType(), msg.getAmountPaise());
+                    tableId, userId, msg.getType(), msg.getAmountPaise(), msg.getCardIndex());
             if (rejection != null) {
                 sendMessageToSession(session, GameServerMessage.actionRejected(rejection));
             }

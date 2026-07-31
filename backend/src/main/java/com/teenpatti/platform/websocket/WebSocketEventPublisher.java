@@ -269,12 +269,43 @@ public class WebSocketEventPublisher {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SHOW_ACCEPTED.name(), payload);
     }
 
+    public void publishShowRejected(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.SHOW_REJECTED.name(), payload);
+    }
+
     public void publishFinalHandsRevealed(String tableId, Object payload) {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.FINAL_HANDS_REVEALED.name(), payload);
     }
 
     public void publishWinnerDeclared(String tableId, Object payload) {
         publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.WINNER_DECLARED.name(), payload);
+    }
+
+    public void publishJokerRevealed(String tableId, String jokerRank) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.JOKER_REVEALED.name(), Map.of(
+                "tableId", tableId,
+                "jokerRank", jokerRank
+        ));
+    }
+
+    public void publishDiscardPhaseStarted(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.DISCARD_PHASE_STARTED.name(), payload);
+    }
+
+    public void publishCardDiscarded(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.CARD_DISCARDED.name(), payload);
+    }
+
+    public void publishAuctionStarted(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.AUCTION_STARTED.name(), payload);
+    }
+
+    public void publishAuctionBid(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.AUCTION_BID.name(), payload);
+    }
+
+    public void publishAuctionEnded(String tableId, Object payload) {
+        publishEvent(StompDestinations.topicTable(tableId), RealTimeEventType.AUCTION_ENDED.name(), payload);
     }
 
     public void publishPotUpdated(String tableId, long potTotalPaise) {

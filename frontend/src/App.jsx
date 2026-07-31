@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import HeaderNav from '@/components/HeaderNav';
 import LobbyView from '@/features/lobby/LobbyView';
 import TeenPattiTableUI from '@/features/table/TeenPattiTableUI';
 import AuthModal from '@/features/auth/AuthModal';
@@ -65,16 +64,6 @@ export default function App() {
     <div className="h-full min-h-full w-full bg-[#1a0505] text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 overflow-hidden">
       <NotificationBootstrap />
       {!activeTableId && <AnnouncementBanner />}
-      {!activeTableId && (
-        <HeaderNav
-          onOpenAuth={openAuth}
-          onOpenWallet={openWallet}
-          onOpenLeaderboard={openLeaderboard}
-          onOpenNotifications={openNotifications}
-          onOpenAdmin={() => setIsAdminOpen(true)}
-          onOpenProfile={openProfile}
-        />
-      )}
 
       <main
         className={
@@ -92,6 +81,7 @@ export default function App() {
             onOpenWallet={openWallet}
             onOpenLeaderboard={openLeaderboard}
             onOpenProfile={openProfile}
+            onOpenNotifications={openNotifications}
           />
         )}
       </main>

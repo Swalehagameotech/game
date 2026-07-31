@@ -40,6 +40,7 @@ public class GameLoopOrchestrator {
     private final RoundManagementService roundManagementService;
     private final WebSocketEventPublisher eventPublisher;
     private final GameBroadcastService gameBroadcastService;
+    private final com.teenpatti.platform.game.variant.VariantPhaseService variantPhaseService;
 
     /**
      * No auto-start when players join — host must explicitly start the game.
@@ -86,8 +87,13 @@ public class GameLoopOrchestrator {
         }
         BettingRoundEngine engine = engineOpt.get();
 
-        // SEE_CARDS must not cancel the active turn timer — it does not consume the turn.
+        String normalizedAction = actionType != null ? actionType.trim().toUpperCase() : "";
         boolean isSeeCards = "SEE_CARDS".equalsIgnoreCase(actionType);
+        if (variantPhaseService.isPreBettingPhase(tableId) && !isSeeCards) {
+            return "Complete " + variantPhaseService.getPhase(tableId).name() + " phase first";
+        }
+
+        // SEE_CARDS must not cancel the active turn timer — it does not consume the turn.
         if (!isSeeCards) {
             cancelTurnTimer(tableId);
         }
@@ -103,7 +109,9 @@ public class GameLoopOrchestrator {
             // While a side-show or show is pending, only the target may respond.
             var pendingShowOpt = handContextManager.getPendingShow(tableId);
             if (pendingShowOpt.isPresent()
-                    && !"SHOW_ACCEPT".equalsIgnoreCase(actionType)) {
+                    && !"SHOW_ACCEPT".equalsIgnoreCase(actionType)
+                    && !"SHOW_REJECT".equalsIgnoreCase(actionType)
+                    && !"SHOW_DECLINE".equalsIgnoreCase(actionType)) {
                 return "Waiting for Show response.";
             }
 
@@ -145,8 +153,11 @@ public class GameLoopOrchestrator {
                 updateTableAfterPack(table, userId, engine);
                 turnManagementService.syncTableFromEngine(table, engine);
                 if (wasMyTurn) {
+                    // Cancel the packer's timer only. Do NOT endTurn() here — sync already
+                    // advanced table.currentTurnUserId to the next player, and endTurn()
+                    // would null that id and wrongly emit TURN_ENDED for the next player.
                     cancelTurnTimer(tableId);
-                    turnManagementService.endTurn(tableId);
+                    eventPublisher.publishTurnEnded(tableId, userId);
                 }
                 eventPublisher.publishPackPlayed(tableId, userId, engine.isHandFinished());
                 eventPublisher.publishPlayerAction(tableId, userId, actionType, 0L, engine.getPotPaise());
@@ -183,6 +194,9 @@ public class GameLoopOrchestrator {
                 return processSideShowResponse(tableId, userId, table, engine, false);
             } else if ("SHOW_ACCEPT".equalsIgnoreCase(actionType)) {
                 return processShowAccept(tableId, userId, table, engine);
+            } else if ("SHOW_REJECT".equalsIgnoreCase(actionType)
+                    || "SHOW_DECLINE".equalsIgnoreCase(actionType)) {
+                return processShowReject(tableId, userId, table, engine);
             } else if ("SHOW".equalsIgnoreCase(actionType)) {
                 if (engine.getActivePlayerIds().size() != 2) {
                     return "Show requires exactly two active players.";
@@ -232,33 +246,29 @@ public class GameLoopOrchestrator {
 
                 eventPublisher.publishShowRequested(tableId, showPayload);
                 eventPublisher.publishShowRequestToPlayer(targetUserId, showPayload);
-                // Raw WS mirror so Player B sees the request without relying only on STOMP.
+                // Raw WS first so Accept/Decline appears instantly (don't wait on STOMP/refresh).
                 gameBroadcastService.broadcastEvent(tableId, "SHOW_REQUEST", showPayload);
+                gameBroadcastService.broadcastEvent(tableId, "SHOW_REQUESTED", showPayload);
                 gameBroadcastService.deliverEventToPlayer(targetUserId, "SHOW_REQUEST", showPayload);
+                gameBroadcastService.deliverEventToPlayer(targetUserId, "SHOW_REQUESTED", showPayload);
 
-                // Blind target sees own cards immediately (not requester's cards).
+                // Blind target may peek own cards to decide Accept/Decline — stay BLIND (no Seen requirement).
                 if (engine.getPlayerStatus(targetUserId) == PlayerStatus.BLIND) {
-                    engine.applyAction(PlayerAction.of(targetUserId, PlayerActionType.SEE_CARDS));
-                    updateTableAfterSee(tableId, table, targetUserId, engine);
-                    turnManagementService.syncTableFromEngine(table, engine);
                     var cards = engine.getPlayerCards(targetUserId);
-                    eventPublisher.publishPlayerCardsRevealedToSelf(targetUserId, java.util.Map.of(
-                            "tableId", tableId,
-                            "userId", targetUserId,
-                            "reason", "SHOW_REQUEST",
-                            "cards", cards));
-                    gameBroadcastService.deliverEventToPlayer(targetUserId, "PLAYER_CARDS_REVEALED_TO_SELF",
-                            java.util.Map.of(
-                                    "tableId", tableId,
-                                    "userId", targetUserId,
-                                    "reason", "SHOW_REQUEST",
-                                    "cards", cards));
-                    gameBroadcastService.deliverPrivateHand(tableId, targetUserId);
+                    java.util.Map<String, Object> peekPayload = new java.util.HashMap<>();
+                    peekPayload.put("tableId", tableId);
+                    peekPayload.put("userId", targetUserId);
+                    peekPayload.put("reason", "SHOW_REQUEST");
+                    peekPayload.put("cards", cards);
+                    eventPublisher.publishPlayerCardsRevealedToSelf(targetUserId, peekPayload);
+                    gameBroadcastService.deliverEventToPlayer(targetUserId, "PLAYER_CARDS_REVEALED_TO_SELF", peekPayload);
                 }
 
                 eventPublisher.publishPlayerAction(tableId, userId, actionType, required, engine.getPotPaise());
                 eventPublisher.publishPotUpdated(tableId, engine.getPotPaise());
-                bettingLogicService.publishBettingStateForTable(table, engine);
+                publishLiveBettingViews(table, engine);
+                // Personalized projection for the challenged player (pendingShow + Accept/Decline).
+                gameBroadcastService.deliverPrivateHand(tableId, targetUserId);
                 gameBroadcastService.broadcastTableState(tableId);
                 return null;
             } else {
@@ -270,22 +280,27 @@ public class GameLoopOrchestrator {
             if (engine.isHandFinished()) {
                 handleHandFinished(tableId, engine);
             } else {
-                // Notify clients when the table just entered the final two-player stage.
-                if (engine.getActivePlayerIds().size() == 2 && "PACK".equalsIgnoreCase(actionType)) {
+                // Notify clients whenever exactly two players remain (Show becomes legal).
+                if (engine.getActivePlayerIds().size() == 2) {
+                    Map<String, Object> showEnabledPayload = new java.util.HashMap<>();
+                    showEnabledPayload.put("tableId", tableId);
+                    showEnabledPayload.put("activePlayerCount", 2);
+                    showEnabledPayload.put("showEnabled", true);
+                    showEnabledPayload.put("activePlayerIds", engine.getActivePlayerIds());
                     eventPublisher.publishEvent(
                             com.teenpatti.platform.websocket.StompDestinations.topicTable(tableId),
                             "SHOW_ENABLED",
-                            Map.of(
-                                    "tableId", tableId,
-                                    "activePlayerCount", 2,
-                                    "showEnabled", true));
+                            showEnabledPayload);
+                    gameBroadcastService.broadcastEvent(tableId, "SHOW_ENABLED", showEnabledPayload);
                 }
-                gameBroadcastService.broadcastTableState(tableId);
                 String nextUser = engine.getCurrentTurnPlayerId();
                 if (table != null && nextUser != null) {
                     int nextSeat = table.getSeatedPlayerIds().indexOf(nextUser);
                     startTurn(tableId, nextUser, nextSeat);
                 }
+                // Republish after turn timer is live so Show + myTurn land correctly.
+                publishLiveBettingViews(table, engine);
+                gameBroadcastService.broadcastTableState(tableId);
             }
             return null;
         } catch (InvalidActionException ex) {
@@ -334,12 +349,25 @@ public class GameLoopOrchestrator {
             if (engine.isHandFinished()) {
                 handleHandFinished(tableId, engine);
             } else {
-                gameBroadcastService.broadcastTableState(tableId);
+                if (engine.getActivePlayerIds().size() == 2) {
+                    Map<String, Object> showEnabledPayload = new java.util.HashMap<>();
+                    showEnabledPayload.put("tableId", tableId);
+                    showEnabledPayload.put("activePlayerCount", 2);
+                    showEnabledPayload.put("showEnabled", true);
+                    showEnabledPayload.put("activePlayerIds", engine.getActivePlayerIds());
+                    eventPublisher.publishEvent(
+                            com.teenpatti.platform.websocket.StompDestinations.topicTable(tableId),
+                            "SHOW_ENABLED",
+                            showEnabledPayload);
+                    gameBroadcastService.broadcastEvent(tableId, "SHOW_ENABLED", showEnabledPayload);
+                }
                 String nextUser = engine.getCurrentTurnPlayerId();
                 if (optTable.isPresent() && nextUser != null) {
                     int nextSeat = optTable.get().getSeatedPlayerIds().indexOf(nextUser);
                     startTurn(tableId, nextUser, nextSeat);
                 }
+                publishLiveBettingViews(optTable.orElse(null), engine);
+                gameBroadcastService.broadcastTableState(tableId);
             }
         } catch (Exception e) {
             log.error("Error auto-packing user [{}] on table [{}]: {}", userId, tableId, e.getMessage());
@@ -349,6 +377,23 @@ public class GameLoopOrchestrator {
     private void startTurn(String tableId, String userId, int seatIndex) {
         turnManagementService.beginTurn(tableId, userId, seatIndex,
                 () -> processAutoPack(tableId, userId));
+    }
+
+    /**
+     * STOMP private queue + raw WebSocket so clients always get myTurn / Show buttons live.
+     */
+    private void publishLiveBettingViews(Table table, BettingRoundEngine engine) {
+        if (table == null || engine == null || engine.isHandFinished()) {
+            return;
+        }
+        bettingLogicService.publishBettingStateForTable(table, engine);
+        List<String> seated = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds() : List.of();
+        for (String playerId : seated) {
+            gameBroadcastService.deliverEventToPlayer(
+                    playerId,
+                    com.teenpatti.platform.websocket.RealTimeEventType.BETTING_STATE.name(),
+                    bettingLogicService.buildBettingState(table, engine, playerId));
+        }
     }
 
     private void cancelTurnTimer(String tableId) {
@@ -396,6 +441,7 @@ public class GameLoopOrchestrator {
         if (table != null) {
             table.setPotPaise(engine.getPotPaise());
             table.setLastAction(userId + " accepted show");
+            table.setStatus(TableStatus.ROUND_END);
             tableRepository.save(table);
         }
 
@@ -428,6 +474,49 @@ public class GameLoopOrchestrator {
         gameBroadcastService.broadcastEvent(tableId, "FINAL_HANDS_REVEALED", revealedPayload);
 
         handleHandFinished(tableId, engine);
+        return null;
+    }
+
+    /**
+     * Target declines Show — pot already includes requester's Show cost; resume requester's turn.
+     * Blind status is preserved (Show never forced Seen).
+     */
+    private String processShowReject(String tableId, String userId, Table table, BettingRoundEngine engine) {
+        var pendingOpt = handContextManager.getPendingShow(tableId);
+        if (pendingOpt.isEmpty()) {
+            return "No Show request is pending.";
+        }
+        HandContextManager.PendingShow pending = pendingOpt.get();
+        if (!userId.equals(pending.targetId())) {
+            return "Only the challenged player can decline Show.";
+        }
+
+        String requesterId = pending.requesterId();
+        handContextManager.clearPendingShow(tableId);
+
+        if (table != null) {
+            table.setStatus(TableStatus.RUNNING);
+            table.setLastAction(userId + " declined show");
+            tableRepository.save(table);
+        }
+
+        eventPublisher.publishShowRejected(tableId, Map.of(
+                "tableId", tableId,
+                "requesterId", requesterId,
+                "targetUserId", userId));
+        eventPublisher.publishPlayerAction(tableId, userId, "SHOW_REJECT", 0L, engine.getPotPaise());
+        gameBroadcastService.broadcastEvent(tableId, "SHOW_REJECTED", Map.of(
+                "tableId", tableId,
+                "requesterId", requesterId,
+                "targetUserId", userId));
+
+        bettingLogicService.publishBettingStateForTable(table, engine);
+        gameBroadcastService.broadcastTableState(tableId);
+
+        if (table != null && requesterId != null && !engine.isHandFinished()) {
+            int seat = table.getSeatedPlayerIds().indexOf(requesterId);
+            startTurn(tableId, requesterId, seat);
+        }
         return null;
     }
 
@@ -677,12 +766,30 @@ public class GameLoopOrchestrator {
             });
         }
 
-        winnerCalculationService.publishWinnerDeclared(tableId, winnerSnapshot);
-        gameBroadcastService.broadcastEvent(tableId, "WINNER_DECLARED", winnerSnapshot);
+        // Aliased payload so frontend never reads ₹0 from missing field names.
+        java.util.Map<String, Object> winnerPayload = new java.util.LinkedHashMap<>();
+        winnerPayload.put("tableId", tableId);
+        winnerPayload.put("handId", handId);
+        winnerPayload.put("winnerUserId", winnerSnapshot.getWinnerUserId());
+        winnerPayload.put("winnerId", winnerSnapshot.getWinnerUserId());
+        winnerPayload.put("winnerDisplayName", winnerSnapshot.getWinnerDisplayName());
+        winnerPayload.put("winningCategory", winnerSnapshot.getWinningCategory());
+        winnerPayload.put("winningHandDescription", winnerSnapshot.getWinningHandDescription());
+        winnerPayload.put("foldWin", winnerSnapshot.isFoldWin());
+        winnerPayload.put("potPaise", winnerSnapshot.getPotPaise());
+        winnerPayload.put("rakePaise", winnerSnapshot.getRakePaise());
+        winnerPayload.put("payoutPaise", winnerSnapshot.getPayoutPaise());
+        winnerPayload.put("winnerPayoutPaise", winnerSnapshot.getPayoutPaise());
+        winnerPayload.put("notes", winnerSnapshot.getNotes());
+        winnerPayload.put("participants", winnerSnapshot.getParticipants());
+
+        winnerCalculationService.publishWinnerDeclared(tableId, winnerPayload);
+        gameBroadcastService.broadcastEvent(tableId, "WINNER_DECLARED", winnerPayload);
 
         // Broadcast while engine still holds outcome/cards for showdown projection
         gameBroadcastService.broadcastTableState(tableId);
         handContextManager.clearHand(tableId);
+        variantPhaseService.clear(tableId);
 
         table.setCurrentTurnUserId(null);
         tableRepository.save(table);

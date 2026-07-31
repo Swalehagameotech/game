@@ -7,6 +7,7 @@ import com.teenpatti.platform.game.config.GameBettingConfigResolver;
 import com.teenpatti.platform.game.engine.BettingRoundEngine;
 import com.teenpatti.platform.game.engine.GameLoopOrchestrator;
 import com.teenpatti.platform.game.engine.HandContextManager;
+import com.teenpatti.platform.game.engine.Rank;
 import com.teenpatti.platform.game.betting.BettingLogicService;
 import com.teenpatti.platform.game.winner.WinnerCalculationService;
 import com.teenpatti.platform.game.shuffle.CardShuffleService;
@@ -14,6 +15,7 @@ import com.teenpatti.platform.game.shuffle.ShuffledDeck;
 import com.teenpatti.platform.game.turn.TurnManagementService;
 import com.teenpatti.platform.game.variant.GameVariantRegistry;
 import com.teenpatti.platform.game.variant.GameVariantStrategy;
+import com.teenpatti.platform.game.variant.VariantPhaseService;
 import com.teenpatti.platform.lobby.config.StakeTierConfig;
 import com.teenpatti.platform.table.Table;
 import com.teenpatti.platform.table.TableRepository;
@@ -31,6 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.UUID;
 
 /**
@@ -57,6 +60,7 @@ public class GameEngineService {
     private final BettingLogicService bettingLogicService;
     private final WinnerCalculationService winnerCalculationService;
     private final GameBettingConfigResolver gameBettingConfigResolver;
+    private final VariantPhaseService variantPhaseService;
 
     public boolean hasActiveHand(String tableId) {
         return handContextManager.hasActiveHand(tableId) || ensureActiveEngine(tableId).isPresent();
@@ -80,7 +84,7 @@ public class GameEngineService {
             return Optional.empty();
         }
 
-        GameVariantStrategy variantStrategy = variantRegistry.requireStrategy(table.getGameVariant());
+        GameVariantStrategy variantStrategy = resolveStrategyForTable(table, false);
         long bootPaise = table.getBootAmountPaise() > 0
                 ? table.getBootAmountPaise()
                 : gameBettingConfigResolver.resolveEngineConfig().getBootAmountPaise();
@@ -155,7 +159,25 @@ public class GameEngineService {
     }
 
     public String processAction(String tableId, String userId, String actionType, long betAmount) {
+        return processAction(tableId, userId, actionType, betAmount, null);
+    }
+
+    public String processAction(
+            String tableId, String userId, String actionType, long betAmount, Integer cardIndex) {
         ensureActiveEngine(tableId);
+        String normalized = actionType != null ? actionType.trim().toUpperCase() : "";
+        if ("DISCARD_CARD".equals(normalized)) {
+            if (cardIndex == null) {
+                return "cardIndex is required for DISCARD_CARD";
+            }
+            return variantPhaseService.processDiscard(tableId, userId, cardIndex);
+        }
+        if ("AUCTION_BID".equals(normalized)) {
+            return variantPhaseService.processAuctionBid(tableId, userId, betAmount);
+        }
+        if ("AUCTION_PASS".equals(normalized)) {
+            return variantPhaseService.processAuctionPass(tableId, userId);
+        }
         return gameLoopOrchestrator.processAction(tableId, userId, actionType, betAmount);
     }
 
@@ -218,7 +240,15 @@ public class GameEngineService {
                     "Minimum " + minRequired + " players required. Currently seated: " + seated.size());
         }
 
-        GameVariantStrategy variantStrategy = variantRegistry.requireStrategy(table.getGameVariant());
+        GameVariantStrategy baseVariantStrategy = variantRegistry.requireStrategy(table.getGameVariant());
+        if (table.getGameVariant() == com.teenpatti.platform.table.GameVariant.JOKER
+                && (table.getJokerRank() == null || table.getJokerRank().isBlank())) {
+            table.setJokerRank(pickRandomRank().name());
+        } else if (table.getGameVariant() != com.teenpatti.platform.table.GameVariant.JOKER) {
+            table.setJokerRank(null);
+        }
+        GameVariantStrategy variantStrategy = resolveStrategyForTable(table, true);
+        baseVariantStrategy.initializeRound(table);
         validateAllBalances(seated, bootPaise);
 
         String handId = UUID.randomUUID().toString();
@@ -247,8 +277,10 @@ public class GameEngineService {
                 winnerCalculationService.createResolver(variantStrategy));
 
         ShuffledDeck shuffled = cardShuffleService.createShuffledDeck(table.getGameVariant());
-        PrivateHandDeal deal = cardDistributionService.dealPrivateHands(shuffled.getDeck(), seated);
+        int cardsPerHand = Math.max(3, variantStrategy.cardsPerHand());
+        PrivateHandDeal deal = cardDistributionService.dealPrivateHands(shuffled.getDeck(), seated, cardsPerHand);
         engine.startHand(seated, deal.getHandsByPlayerId());
+        variantStrategy.dealCards(table, deal.getHandsByPlayerId());
         int firstTurnSeat = turnManagementService.resolveFirstTurnSeatIndex(dealerSeat, seated.size());
         String firstTurnUserId = seated.get(firstTurnSeat);
         engine.setStartingTurnPlayer(firstTurnUserId);
@@ -280,9 +312,12 @@ public class GameEngineService {
         eventPublisher.publishCardsDistributed(tableId, Map.of(
                 "message", "Cards dealt privately to all players.",
                 "handId", handId,
-                "cardsPerPlayer", com.teenpatti.platform.game.engine.DeckConstants.CARDS_PER_HAND,
+                "cardsPerPlayer", cardsPerHand,
                 "playersDealt", seated.size()
         ));
+        if (table.getGameVariant() == com.teenpatti.platform.table.GameVariant.JOKER && table.getJokerRank() != null) {
+            eventPublisher.publishJokerRevealed(tableId, table.getJokerRank());
+        }
         eventPublisher.publishDealerSelected(tableId, dealerSeat);
         eventPublisher.publishPotUpdated(tableId, engine.getPotPaise());
         eventPublisher.publishGameRunning(tableId, Map.of(
@@ -306,6 +341,21 @@ public class GameEngineService {
             gameBroadcastService.deliverPrivateHand(tableId, playerId);
         }
 
+        com.teenpatti.platform.table.GameVariant activeVariant = table.getGameVariant();
+        if (activeVariant == com.teenpatti.platform.table.GameVariant.DISCARD_ONE) {
+            variantPhaseService.startDiscardPhase(tableId, seated, firstTurnUserId, firstTurnSeat);
+            bettingLogicService.publishBettingStateForTable(table, engine);
+            log.info("Discard-one phase started on table [{}] — betting delayed until all discard", tableId);
+            return table;
+        }
+        if (activeVariant == com.teenpatti.platform.table.GameVariant.AUCTION) {
+            variantPhaseService.startAuctionPhase(tableId, seated, firstTurnUserId, firstTurnSeat, bootPaise);
+            bettingLogicService.publishBettingStateForTable(table, engine);
+            log.info("Auction phase started on table [{}] — betting delayed until auction ends", tableId);
+            return table;
+        }
+
+        variantStrategy.beforeBetting(table);
         gameLoopOrchestrator.beginTurn(tableId, firstTurnUserId, firstTurnSeat);
 
         bettingLogicService.publishBettingStateForTable(table, engine);
@@ -314,6 +364,32 @@ public class GameEngineService {
                 handId, tableId, shuffled.getShuffleId(), variantStrategy.getVariant(), seated.size(), engine.getPotPaise());
 
         return table;
+    }
+
+    private GameVariantStrategy resolveStrategyForTable(Table table, boolean createRoundContext) {
+        GameVariantStrategy base = variantRegistry.requireStrategy(table.getGameVariant());
+        if (table.getGameVariant() == com.teenpatti.platform.table.GameVariant.JOKER) {
+            String rank = table.getJokerRank();
+            if ((rank == null || rank.isBlank()) && createRoundContext) {
+                rank = pickRandomRank().name();
+                table.setJokerRank(rank);
+            }
+            if (rank != null && !rank.isBlank()) {
+                return base.withRoundContext(Map.of("jokerRank", rank));
+            }
+        }
+        if (table.getGameVariant() == com.teenpatti.platform.table.GameVariant.AUCTION) {
+            String rank = table.getJokerRank();
+            if (rank != null && !rank.isBlank()) {
+                return base.withRoundContext(Map.of("jokerRank", rank));
+            }
+        }
+        return base;
+    }
+
+    private Rank pickRandomRank() {
+        Rank[] values = Rank.values();
+        return values[ThreadLocalRandom.current().nextInt(values.length)];
     }
 
     private long resolveBootPaise(Table table) {

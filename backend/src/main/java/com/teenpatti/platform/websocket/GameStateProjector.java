@@ -75,9 +75,16 @@ public class GameStateProjector {
                 visibleCards = showdownRevealed.get(pid);
             }
             // Rule 2: Recipient sees own card values ONLY after choosing SEE (BLIND = card backs via cardCount)
+            // Exception: Blind Show target may peek own cards while deciding Accept/Decline.
             else if (pid.equals(recipientUserId) && engine != null && actualCards != null && !actualCards.isEmpty()) {
                 PlayerStatus ownerStatus = resolvePlayerStatus(table, engine, pid);
-                if (ownerStatus == PlayerStatus.SEEN) {
+                boolean pendingShowTarget = false;
+                if (table.getId() != null) {
+                    var pendingShow = handContextManager.getPendingShow(table.getId());
+                    pendingShowTarget = pendingShow.isPresent()
+                            && recipientUserId.equals(pendingShow.get().targetId());
+                }
+                if (ownerStatus == PlayerStatus.SEEN || pendingShowTarget) {
                     visibleCards = actualCards;
                 }
             }
@@ -132,6 +139,10 @@ public class GameStateProjector {
                         .turnTimerSeconds(0)
                         .myTurn(false)
                         .allowedActions(List.of())
+                        .variantPhase(null)
+                        .auctionHighBidPaise(0L)
+                        .auctionHighBidderId(null)
+                        .auctionMinBidPaise(0L)
                         .build();
 
         long requiredBetPaise = handEnded ? 0L : bettingState.getRequiredBetPaise();
@@ -145,6 +156,7 @@ public class GameStateProjector {
         // While Show/Side-Show is pending, the challenged player may respond immediately.
         if (!handEnded && allowedActions != null
                 && (allowedActions.contains("SHOW_ACCEPT")
+                || allowedActions.contains("SHOW_REJECT")
                 || allowedActions.contains("SIDE_SHOW_ACCEPT"))) {
             myTurn = true;
         }
@@ -184,6 +196,8 @@ public class GameStateProjector {
                 .tableId(table.getId())
                 .hostId(table.getHostId())
                 .tableType(table.getTableType() != null ? table.getTableType().name() : TableType.PUBLIC.name())
+                .gameVariant(table.getGameVariant() != null ? table.getGameVariant().name() : com.teenpatti.platform.table.GameVariant.CLASSIC.name())
+                .jokerRank(table.getJokerRank())
                 .inviteCode(table.getInviteCode())
                 .countdownSeconds(table.getCountdownSeconds())
                 .bootAmountPaise(table.getBootAmountPaise())
@@ -223,6 +237,10 @@ public class GameStateProjector {
                 .pendingShow(pendingShowView)
                 .disconnectedPlayerIds(table.getDisconnectedPlayerIds() != null
                         ? table.getDisconnectedPlayerIds() : List.of())
+                .variantPhase(bettingState.getVariantPhase())
+                .auctionHighBidPaise(bettingState.getAuctionHighBidPaise())
+                .auctionHighBidderId(bettingState.getAuctionHighBidderId())
+                .auctionMinBidPaise(bettingState.getAuctionMinBidPaise())
                 .build();
     }
 

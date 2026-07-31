@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,21 +22,54 @@ public class SessionRegistry {
 
     public void registerUserSession(String userId, WebSocketSession session) {
         if (userId == null || session == null) return;
-        userSessionMap.put(userId, session);
+        WebSocketSession previous = userSessionMap.put(userId, session);
+        if (previous != null && previous.isOpen() && !Objects.equals(previous.getId(), session.getId())) {
+            try {
+                previous.close();
+            } catch (IOException e) {
+                log.debug("Failed closing previous WS session for [{}]: {}", userId, e.getMessage());
+            }
+        }
         log.info("Registered WebSocket session for userId [{}]", userId);
     }
 
-    public void unregisterUserSession(String userId) {
+    /**
+     * Unregister only if {@code session} is still the mapped session.
+     * Prevents a stale close (reconnect race) from wiping the newer live socket —
+     * which was silently dropping SHOW_REQUEST / WINNER_DECLARED deliveries.
+     */
+    public void unregisterUserSession(String userId, WebSocketSession session) {
         if (userId == null) return;
-        userSessionMap.remove(userId);
-        String tableId = userTableMap.remove(userId);
-        if (tableId != null) {
-            Set<String> connections = tableConnectionMap.get(tableId);
-            if (connections != null) {
-                connections.remove(userId);
+
+        userSessionMap.compute(userId, (id, existing) -> {
+            if (existing == null) {
+                return null;
             }
+            if (session == null || Objects.equals(existing.getId(), session.getId())) {
+                return null; // remove
+            }
+            // Newer session already registered — keep it.
+            return existing;
+        });
+
+        // Only detach table mapping when this user has no open session left.
+        if (!isUserConnected(userId)) {
+            String tableId = userTableMap.remove(userId);
+            if (tableId != null) {
+                Set<String> connections = tableConnectionMap.get(tableId);
+                if (connections != null) {
+                    connections.remove(userId);
+                }
+            }
+            log.info("Unregistered WebSocket session for userId [{}]", userId);
+        } else {
+            log.info("Ignored stale WS close for userId [{}] — newer session still active", userId);
         }
-        log.info("Unregistered WebSocket session for userId [{}]", userId);
+    }
+
+    /** @deprecated Prefer {@link #unregisterUserSession(String, WebSocketSession)} */
+    public void unregisterUserSession(String userId) {
+        unregisterUserSession(userId, null);
     }
 
     public void attachUserToTable(String userId, String tableId) {

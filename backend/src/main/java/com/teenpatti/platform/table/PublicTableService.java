@@ -75,12 +75,14 @@ public class PublicTableService {
     /**
      * Finds open public tables matching boot amount for quick-play matchmaking.
      */
-    public List<Table> findQuickPlayCandidates(long bootAmountPaise, String userId) {
+    public List<Table> findQuickPlayCandidates(long bootAmountPaise, String userId, GameVariant variant) {
+        GameVariant selectedVariant = variant != null ? variant : GameVariant.CLASSIC;
         return tableRepository.findAll().stream()
                 .filter(this::isPublicTable)
                 .filter(t -> t.getStatus() != TableStatus.CLOSED)
                 .filter(t -> JOINABLE_STATUSES.contains(t.getStatus()))
                 .filter(t -> resolveBootPaise(t) == bootAmountPaise)
+                .filter(t -> (t.getGameVariant() != null ? t.getGameVariant() : GameVariant.CLASSIC) == selectedVariant)
                 .filter(t -> {
                     int seated = t.getSeatedPlayerIds() != null ? t.getSeatedPlayerIds().size() : 0;
                     return seated < t.getMaxPlayers();

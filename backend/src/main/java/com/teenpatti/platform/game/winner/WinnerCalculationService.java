@@ -96,6 +96,20 @@ public class WinnerCalculationService {
                 snapshot.getPayoutPaise());
     }
 
+    /** Overload for aliased Map payloads (winnerId / winnerPayoutPaise for clients). */
+    public void publishWinnerDeclared(String tableId, Object payload) {
+        eventPublisher.publishWinnerDeclared(tableId, payload);
+        if (payload instanceof WinnerSnapshot snapshot) {
+            log.info("Winner declared on table [{}]: {} ({}) payout {} paise",
+                    tableId,
+                    snapshot.getWinnerDisplayName(),
+                    snapshot.getWinningCategory(),
+                    snapshot.getPayoutPaise());
+        } else {
+            log.info("Winner declared on table [{}] payload={}", tableId, payload);
+        }
+    }
+
     private List<ShowdownParticipantView> buildParticipants(
             HandOutcome outcome,
             BettingRoundEngine engine,

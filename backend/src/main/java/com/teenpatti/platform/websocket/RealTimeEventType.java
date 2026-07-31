@@ -53,12 +53,23 @@ public enum RealTimeEventType {
     SHOW_REQUEST,
     /** Target player accepted Show; both hands will be revealed. */
     SHOW_ACCEPTED,
+    /** Target player declined Show; betting resumes. */
+    SHOW_REJECTED,
     /** Private event: player's own cards revealed for Show response (never opponent cards). */
     PLAYER_CARDS_REVEALED_TO_SELF,
     /** Both showdown hands revealed to the entire table after Show accept. */
     FINAL_HANDS_REVEALED,
     /** Emitted when exactly two active players remain and Show becomes available. */
     SHOW_ENABLED,
+    /** Variant metadata: current joker rank revealed for this round. */
+    JOKER_REVEALED,
+    /** Discard-one: all players must discard before betting. */
+    DISCARD_PHASE_STARTED,
+    CARD_DISCARDED,
+    /** Auction variant: bidding for joker before betting. */
+    AUCTION_STARTED,
+    AUCTION_BID,
+    AUCTION_ENDED,
     WINNER_DECLARED,
     POT_UPDATED,
     BET_UPDATED,

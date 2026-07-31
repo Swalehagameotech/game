@@ -78,6 +78,13 @@ public class RoundManagementService {
         tableRepository.save(table);
 
         eventPublisher.publishRoundFinished(tableId, seated >= minRequired ? nextRoundDelaySeconds : 0);
+        gameBroadcastService.broadcastEvent(tableId, RealTimeEventType.ROUND_FINISHED.name(), Map.of(
+                "tableId", tableId,
+                "nextRoundInSeconds", seated >= minRequired ? nextRoundDelaySeconds : 0,
+                "countdownStartsAfterWinnerDisplay", true,
+                "winnerDisplaySeconds", winnerDisplaySeconds,
+                "message", "Round finished"
+        ));
         gameBroadcastService.broadcastTableState(tableId);
 
         if (seated <= 0) {
@@ -184,6 +191,14 @@ public class RoundManagementService {
                         "message", "Next round starting..."
                 )
         );
+        // Raw WS mirror — clients often miss STOMP-only countdown after winner banner.
+        gameBroadcastService.broadcastEvent(tableId, RealTimeEventType.NEXT_ROUND_COUNTDOWN.name(), Map.of(
+                "tableId", tableId,
+                "secondsRemaining", delaySeconds,
+                "countdownSeconds", delaySeconds,
+                "roundNumber", table.getRoundNumber(),
+                "message", "Next round starting..."
+        ));
         eventPublisher.publishTableUpdated(tableId, table);
         gameBroadcastService.broadcastTableState(tableId);
 
@@ -229,6 +244,13 @@ public class RoundManagementService {
                             "message", next > 0 ? "Next round starting..." : "Starting next round"
                     )
             );
+            gameBroadcastService.broadcastEvent(tableId, RealTimeEventType.NEXT_ROUND_COUNTDOWN.name(), Map.of(
+                    "tableId", tableId,
+                    "secondsRemaining", next,
+                    "countdownSeconds", next,
+                    "roundNumber", table.getRoundNumber(),
+                    "message", next > 0 ? "Next round starting..." : "Starting next round"
+            ));
             gameBroadcastService.broadcastTableState(tableId);
 
             if (next <= 0) {
@@ -269,6 +291,13 @@ public class RoundManagementService {
                             "message", "Next round started"
                     )
             );
+            gameBroadcastService.broadcastEvent(tableId, RealTimeEventType.NEXT_ROUND_STARTED.name(), Map.of(
+                    "tableId", tableId,
+                    "roundNumber", started.getRoundNumber(),
+                    "handId", started.getCurrentHandId() != null ? started.getCurrentHandId() : "",
+                    "message", "Next round started"
+            ));
+            gameBroadcastService.broadcastTableState(tableId);
             log.info("Next round started on table [{}] as round {}", tableId, started.getRoundNumber());
         } catch (Exception ex) {
             log.warn("Failed to auto-start next round on table [{}]: {}", tableId, ex.getMessage());

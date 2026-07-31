@@ -311,6 +311,7 @@ export function mergeGameState(prev, incoming, user, options = {}) {
     && !endStatuses.includes(merged.status)) {
     const actions = new Set(merged.allowedActions || []);
     actions.add('SHOW_ACCEPT');
+    actions.add('SHOW_REJECT');
     merged.allowedActions = [...actions];
     merged.myTurn = true;
     if (merged.status !== 'SHOW') merged.status = 'SHOW';
@@ -341,6 +342,8 @@ export function mergeGameState(prev, incoming, user, options = {}) {
     && prev.blindAmountPaise === merged.blindAmountPaise
     && prev.chaalAmountPaise === merged.chaalAmountPaise
     && prev.currentBaseStakePaise === merged.currentBaseStakePaise
+    && prev.gameVariant === merged.gameVariant
+    && prev.jokerRank === merged.jokerRank
     && prev.dealerSeatIndex === merged.dealerSeatIndex
     && prev.hostId === merged.hostId
     && prev.countdownSeconds === merged.countdownSeconds
@@ -408,6 +411,12 @@ export function normalizeGameState(data, user) {
     tableId: data.tableId || data.id,
     hostId: data.hostId,
     tableType: data.tableType,
+    gameVariant: data.gameVariant || 'CLASSIC',
+    jokerRank: data.jokerRank ?? null,
+    variantPhase: data.variantPhase ?? null,
+    auctionHighBidPaise: data.auctionHighBidPaise ?? 0,
+    auctionHighBidderId: data.auctionHighBidderId ?? null,
+    auctionMinBidPaise: data.auctionMinBidPaise ?? 0,
     inviteCode: data.inviteCode,
     countdownSeconds: data.countdownSeconds ?? 0,
     minPlayers: data.minPlayers ?? 3,

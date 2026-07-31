@@ -37,13 +37,6 @@ public class CardShuffleService {
 
     public ShuffledDeck createShuffledDeck(GameVariant variant) {
         GameVariant resolved = variant != null ? variant : GameVariant.CLASSIC;
-        if (resolved != GameVariant.CLASSIC
-                && resolved != GameVariant.HIGHER
-                && resolved != GameVariant.MEDIUM
-                && resolved != GameVariant.LOWER) {
-            throw new UnsupportedOperationException(
-                    "Shuffle for variant " + resolved + " is not implemented yet. Only CLASSIC is supported.");
-        }
 
         Deck deck = new Deck(secureRandom);
         deck.shuffle();

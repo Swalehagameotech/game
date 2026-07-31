@@ -262,14 +262,17 @@ public class TableService {
      * Returns updated betting state for the acting player.
      */
     public com.teenpatti.platform.game.betting.BettingState processPlayerAction(
-            String userId, String tableId, String actionType, long amountPaise) {
+            String userId, String tableId, com.teenpatti.platform.table.dto.PlayerActionRequest request) {
+        String actionType = request.getActionType();
+        long amountPaise = request.getAmountPaise();
         Table table = tableRepository.findById(tableId)
                 .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
         if (table.getSeatedPlayerIds() == null || !table.getSeatedPlayerIds().contains(userId)) {
             throw new PlayerNotSeatedException("Player is not seated at table: " + tableId);
         }
 
-        String rejection = gameEngineService.processAction(tableId, userId, actionType, amountPaise);
+        String rejection = gameEngineService.processAction(
+                tableId, userId, actionType, amountPaise, request.getCardIndex());
         if (rejection != null) {
             throw new IllegalStateException(rejection);
         }

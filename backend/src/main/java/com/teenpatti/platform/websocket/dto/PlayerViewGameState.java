@@ -53,6 +53,13 @@ public class PlayerViewGameState {
     private HandOutcome handOutcome;
     private WinnerSnapshot winnerSnapshot;
     private String tableType;
+    private String gameVariant;
+    private String jokerRank;
+    /** Pre-betting phase: DISCARD | AUCTION | null */
+    private String variantPhase;
+    private long auctionHighBidPaise;
+    private String auctionHighBidderId;
+    private long auctionMinBidPaise;
     private String inviteCode;
     private int countdownSeconds;
     private long bootAmountPaise;

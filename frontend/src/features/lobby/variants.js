@@ -1,0 +1,21 @@
+export const VARIANT_CARDS = [
+  { key: 'CLASSIC', name: 'Classic', description: 'Original Teen Patti' },
+  { key: 'AK47', name: 'AK47', description: 'A, K, 4, 7 are jokers' },
+  { key: 'JOKER', name: 'Joker', description: 'Random joker every round' },
+  { key: 'MUFLIS', name: 'Muflis', description: 'Lowest hand wins' },
+  { key: 'BEST_OF_FOUR', name: 'Best of Four', description: 'Best 3 from 4 cards' },
+  { key: 'DISCARD_ONE', name: 'Discard One', description: 'Discard one card from four' },
+  { key: 'LOWEST_JOKER', name: 'Lowest Joker', description: 'One revealed rank becomes joker' },
+  { key: 'HIGH_WILD', name: 'High Wild', description: 'Highest revealed rank is wild' },
+  { key: 'LOW_WILD', name: 'Low Wild', description: 'Lowest revealed rank is wild' },
+  { key: 'HIDDEN_JOKER', name: 'Hidden Joker', description: 'Server-selected hidden joker' },
+  { key: 'ONE_EYED_JACK', name: 'One Eyed Jack', description: 'Jh and Js are jokers' },
+  { key: 'BUST_CARD', name: 'Bust Card', description: 'Revealed rank becomes bust' },
+  { key: 'REVOLVING_JOKER', name: 'Revolving Joker', description: 'Joker changes during round' },
+  { key: 'NINE_NINE_NINE', name: '999', description: 'Point-based last digit wins' },
+  { key: 'TWENTY_TWENTY', name: '2020', description: 'Two-pair style variant' },
+  { key: 'AUCTION', name: 'Auction', description: 'Bid to win joker rights' },
+  { key: 'BANKO', name: 'Banko', description: 'Play against banker' },
+  { key: 'DEALERS_CHOICE', name: "Dealer's Choice", description: 'Dealer picks variant each round' },
+];
+

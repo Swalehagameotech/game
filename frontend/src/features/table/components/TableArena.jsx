@@ -121,7 +121,7 @@ export default function TableArena({
       <img
         src={TABLE_BG_URL}
         alt="Teen Patti table"
-        className="block w-auto h-auto max-w-full max-h-[min(58dvh,520px)] sm:max-h-[min(72dvh,720px)] md:max-h-[min(82vh,820px)] object-contain select-none pointer-events-none"
+        className="block w-auto h-auto max-w-full max-h-[min(50dvh,360px)] sm:max-h-[min(58dvh,520px)] md:max-h-[min(72dvh,720px)] lg:max-h-[min(82vh,820px)] object-contain select-none pointer-events-none"
         draggable={false}
       />
 

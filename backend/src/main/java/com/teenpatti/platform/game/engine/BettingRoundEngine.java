@@ -14,7 +14,7 @@ import java.util.*;
 public class BettingRoundEngine {
 
     private final GameEngineConfig config;
-    private final WinnerResolver winnerResolver;
+    private WinnerResolver winnerResolver;
     private final List<String> playerIds;
     private final Map<String, PlayerStatus> playerStatusMap;
     private final Map<String, List<Card>> playerHandMap;
@@ -25,6 +25,7 @@ public class BettingRoundEngine {
     private long potPaise;
     private boolean handFinished;
     private HandOutcome outcome;
+    private int cardsPerPlayer = DeckConstants.CARDS_PER_HAND;
 
     public BettingRoundEngine(GameEngineConfig config) {
         this(config, new VariantWinnerResolver(new ClassicVariantStrategy()));
@@ -62,16 +63,21 @@ public class BettingRoundEngine {
         this.playerStatusMap.clear();
         this.playerHandMap.clear();
         this.playerContributedMap.clear();
+        this.cardsPerPlayer = DeckConstants.CARDS_PER_HAND;
 
         long bootPaise = config.getBootAmountPaise();
         this.potPaise = 0L;
 
         for (String playerId : playerIds) {
             List<Card> hand = privateHands.get(playerId);
-            if (hand == null || hand.size() != com.teenpatti.platform.game.engine.DeckConstants.CARDS_PER_HAND) {
+            if (hand == null || hand.size() < 3) {
                 throw new IllegalArgumentException(
-                        "Player " + playerId + " must have exactly "
-                                + com.teenpatti.platform.game.engine.DeckConstants.CARDS_PER_HAND + " cards dealt");
+                        "Player " + playerId + " must have at least 3 cards dealt");
+            }
+            if (cardsPerPlayer == DeckConstants.CARDS_PER_HAND) {
+                cardsPerPlayer = hand.size();
+            } else if (hand.size() != cardsPerPlayer) {
+                throw new IllegalArgumentException("All players must have equal hand size");
             }
             this.playerStatusMap.put(playerId, PlayerStatus.BLIND);
             this.playerHandMap.put(playerId, new ArrayList<>(hand));
@@ -349,13 +355,12 @@ public class BettingRoundEngine {
         if (handA == null || handB == null) {
             return null;
         }
-        HandResult resultA = HandEvaluator.evaluateHand(handA);
-        HandResult resultB = HandEvaluator.evaluateHand(handB);
-        int cmp = HandEvaluator.compareHands(resultA, resultB);
-        if (cmp == 0) {
-            return null; // tie — neither packs in classic house rules we keep both
+        HandOutcome showdown = winnerResolver.resolveShowdown(
+                playerA, handA, playerB, handB, 0L, config);
+        if (showdown == null || showdown.getWinnerId() == null) {
+            return null;
         }
-        return cmp > 0 ? playerB : playerA;
+        return showdown.getWinnerId().equals(playerA) ? playerB : playerA;
     }
 
     public List<String> getPlayerIdsByStatus(PlayerStatus status) {
@@ -403,6 +408,7 @@ public class BettingRoundEngine {
         this.playerStatusMap.clear();
         this.playerHandMap.clear();
         this.playerContributedMap.clear();
+        this.cardsPerPlayer = DeckConstants.CARDS_PER_HAND;
         this.handFinished = false;
         this.outcome = null;
         this.potPaise = Math.max(0L, pot);
@@ -410,9 +416,14 @@ public class BettingRoundEngine {
 
         for (String playerId : playerIds) {
             List<Card> hand = privateHands.get(playerId);
-            if (hand == null || hand.size() != DeckConstants.CARDS_PER_HAND) {
+            if (hand == null || hand.size() < 3) {
                 throw new IllegalArgumentException(
-                        "Player " + playerId + " must have exactly " + DeckConstants.CARDS_PER_HAND + " cards");
+                        "Player " + playerId + " must have at least 3 cards");
+            }
+            if (cardsPerPlayer == DeckConstants.CARDS_PER_HAND) {
+                cardsPerPlayer = hand.size();
+            } else if (hand.size() != cardsPerPlayer) {
+                throw new IllegalArgumentException("All players must have equal hand size");
             }
             this.playerHandMap.put(playerId, new ArrayList<>(hand));
             PlayerStatus status = statuses != null ? statuses.get(playerId) : null;
@@ -466,5 +477,31 @@ public class BettingRoundEngine {
 
     public GameEngineConfig getConfig() {
         return config;
+    }
+
+    public void setWinnerResolver(WinnerResolver winnerResolver) {
+        if (winnerResolver == null) {
+            throw new IllegalArgumentException("WinnerResolver must not be null");
+        }
+        this.winnerResolver = winnerResolver;
+    }
+
+    /**
+     * Removes one card from a player's hand during discard-one pre-betting phase.
+     * @return true when hand is reduced to 3 cards
+     */
+    public synchronized boolean discardCard(String playerId, int cardIndex) {
+        if (handFinished) {
+            return false;
+        }
+        List<Card> hand = playerHandMap.get(playerId);
+        if (hand == null || hand.size() <= 3) {
+            return false;
+        }
+        if (cardIndex < 0 || cardIndex >= hand.size()) {
+            return false;
+        }
+        hand.remove(cardIndex);
+        return hand.size() == 3;
     }
 }

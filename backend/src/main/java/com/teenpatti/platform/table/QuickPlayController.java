@@ -38,10 +38,11 @@ public class QuickPlayController {
 
         String userId = authentication.getPrincipal().toString();
         long targetBootPaise = request.getBootAmountPaise() != null ? request.getBootAmountPaise() : 1000L;
+        GameVariant selectedVariant = GameVariantResolver.resolve(request.getGameVariant());
 
-        log.info("Quick Play request for user [{}] boot {} paise", userId, targetBootPaise);
+        log.info("Quick Play request for user [{}] boot {} paise variant {}", userId, targetBootPaise, selectedVariant);
 
-        List<Table> candidates = publicTableService.findQuickPlayCandidates(targetBootPaise, userId);
+        List<Table> candidates = publicTableService.findQuickPlayCandidates(targetBootPaise, userId, selectedVariant);
         if (!candidates.isEmpty()) {
             Table targetTable = candidates.get(0);
             log.info("Quick Play joining existing public table [{}] for user [{}]", targetTable.getId(), userId);
@@ -59,7 +60,7 @@ public class QuickPlayController {
                 .tableName("Teen Patti Quick Play ₹" + (targetBootPaise / 100))
                 .stakeTier(tier)
                 .bootAmount(targetBootPaise)
-                .gameVariant("CLASSIC")
+                .gameVariant(selectedVariant.name())
                 .minPlayers(3)
                 .maxPlayers(6)
                 .build();

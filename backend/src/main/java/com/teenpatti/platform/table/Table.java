@@ -55,6 +55,21 @@ public class Table {
     @Builder.Default
     private GameVariant gameVariant = GameVariant.CLASSIC;
 
+    /** Round-scoped joker rank for joker-style variants (e.g. JOKER). */
+    private String jokerRank;
+
+    /** Reserved for banker-based variants. */
+    private String bankerId;
+
+    /** Reserved for hidden-joker variants. */
+    private String hiddenJoker;
+
+    /** Reserved for auction variants. */
+    private String auctionWinner;
+
+    /** Reserved for variant-specific settings. */
+    private java.util.Map<String, Object> settings;
+
     @Builder.Default
     private long bootAmountPaise = 1000L;
 

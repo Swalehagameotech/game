@@ -11,6 +11,7 @@ import com.teenpatti.platform.websocket.dto.TableBroadcastPayload;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.TextMessage;
@@ -36,6 +37,10 @@ public class GameBroadcastService {
 
     @Autowired(required = false)
     private StringRedisTemplate redisTemplate;
+
+    @Lazy
+    @Autowired(required = false)
+    private WebSocketEventPublisher eventPublisher;
 
     public void broadcastTableState(String tableId) {
         Optional<Table> tableOpt = tableRepository.findById(tableId);
@@ -69,10 +74,16 @@ public class GameBroadcastService {
         if (playerId == null || eventType == null) {
             return;
         }
-        sendToSession(playerId, GameServerMessage.builder()
+        GameServerMessage message = GameServerMessage.builder()
                 .type(eventType)
                 .payload(payload)
-                .build());
+                .build();
+        boolean sent = sendToSession(playerId, message);
+        if (!sent && eventPublisher != null) {
+            // Fallback so Show / Winner still reach the client when raw WS session is missing.
+            eventPublisher.publishEvent(StompDestinations.queueGame(playerId), eventType, payload);
+            log.warn("Raw WS miss for user [{}] event [{}] — fell back to STOMP user queue", playerId, eventType);
+        }
     }
 
     /** Broadcasts a typed event to every seated player's raw WebSocket session. */
@@ -86,11 +97,22 @@ public class GameBroadcastService {
         for (String playerId : seatedIds) {
             deliverEventToPlayer(playerId, eventType, payload);
         }
+        // Also fan-out on the table STOMP topic so subscribed clients get it once.
+        if (eventPublisher != null && tableId != null) {
+            eventPublisher.publishEvent(StompDestinations.topicTable(tableId), eventType, payload);
+        }
     }
 
     private void deliverToPlayer(String tableId, String playerId, GameServerMessage message) {
         // Always deliver locally first so Redis downtime never blocks live updates.
-        sendToSession(playerId, message);
+        boolean sent = sendToSession(playerId, message);
+        if (!sent && eventPublisher != null && message.getType() != null) {
+            eventPublisher.publishEvent(
+                    StompDestinations.queueGame(playerId),
+                    message.getType(),
+                    message.getPayload());
+            log.warn("Raw WS STATE miss for user [{}] on table [{}] — STOMP queue fallback", playerId, tableId);
+        }
 
         if (redisTemplate == null) {
             return;
@@ -110,15 +132,20 @@ public class GameBroadcastService {
         }
     }
 
-    private void sendToSession(String playerId, GameServerMessage message) {
+    /** @return true if delivered on an open raw WebSocket session */
+    private boolean sendToSession(String playerId, GameServerMessage message) {
         WebSocketSession session = sessionRegistry.getWebSocketSession(playerId);
         if (session == null || !session.isOpen()) {
-            return;
+            log.warn("No open raw WS session for user [{}] — dropping local deliver of [{}]",
+                    playerId, message != null ? message.getType() : "null");
+            return false;
         }
         try {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(message)));
+            return true;
         } catch (IOException e) {
             log.error("Failed to send WS message to user [{}]: {}", playerId, e.getMessage());
+            return false;
         }
     }
 }

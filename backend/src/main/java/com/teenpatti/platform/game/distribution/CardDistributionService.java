@@ -22,14 +22,18 @@ import java.util.Set;
 public class CardDistributionService {
 
     public PrivateHandDeal dealPrivateHands(Deck deck, List<String> playerIdsInSeatOrder) {
-        validateInputs(deck, playerIdsInSeatOrder);
+        return dealPrivateHands(deck, playerIdsInSeatOrder, DeckConstants.CARDS_PER_HAND);
+    }
+
+    public PrivateHandDeal dealPrivateHands(Deck deck, List<String> playerIdsInSeatOrder, int cardsPerHand) {
+        validateInputs(deck, playerIdsInSeatOrder, cardsPerHand);
 
         Map<String, List<Card>> hands = new LinkedHashMap<>();
         Set<Card> dealtCards = new HashSet<>();
 
         for (String playerId : playerIdsInSeatOrder) {
-            List<Card> hand = List.copyOf(deck.deal(DeckConstants.CARDS_PER_HAND));
-            validateHand(playerId, hand);
+            List<Card> hand = List.copyOf(deck.deal(cardsPerHand));
+            validateHand(playerId, hand, cardsPerHand);
             for (Card card : hand) {
                 if (!dealtCards.add(card)) {
                     throw new IllegalStateException(
@@ -39,14 +43,14 @@ public class CardDistributionService {
             hands.put(playerId, hand);
         }
 
-        int totalDealt = playerIdsInSeatOrder.size() * DeckConstants.CARDS_PER_HAND;
+        int totalDealt = playerIdsInSeatOrder.size() * cardsPerHand;
         log.debug("Dealt {} cards ({} per player) to {} players, {} cards remain in deck",
-                totalDealt, DeckConstants.CARDS_PER_HAND, playerIdsInSeatOrder.size(), deck.remainingCards());
+                totalDealt, cardsPerHand, playerIdsInSeatOrder.size(), deck.remainingCards());
 
         return new PrivateHandDeal(hands, totalDealt, deck.remainingCards());
     }
 
-    private void validateInputs(Deck deck, List<String> playerIdsInSeatOrder) {
+    private void validateInputs(Deck deck, List<String> playerIdsInSeatOrder, int cardsPerHand) {
         if (deck == null) {
             throw new IllegalArgumentException("Deck must not be null");
         }
@@ -59,17 +63,20 @@ public class CardDistributionService {
             throw new IllegalArgumentException("Duplicate player ids in seat order");
         }
 
-        int requiredCards = playerIdsInSeatOrder.size() * DeckConstants.CARDS_PER_HAND;
+        if (cardsPerHand < 3) {
+            throw new IllegalArgumentException("cardsPerHand must be at least 3");
+        }
+        int requiredCards = playerIdsInSeatOrder.size() * cardsPerHand;
         if (deck.remainingCards() < requiredCards) {
             throw new IllegalStateException(
                     "Insufficient cards in deck: need " + requiredCards + ", have " + deck.remainingCards());
         }
     }
 
-    private void validateHand(String playerId, List<Card> hand) {
-        if (hand == null || hand.size() != DeckConstants.CARDS_PER_HAND) {
+    private void validateHand(String playerId, List<Card> hand, int cardsPerHand) {
+        if (hand == null || hand.size() != cardsPerHand) {
             throw new IllegalStateException(
-                    "Player " + playerId + " must receive exactly " + DeckConstants.CARDS_PER_HAND + " cards");
+                    "Player " + playerId + " must receive exactly " + cardsPerHand + " cards");
         }
     }
 }

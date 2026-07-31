@@ -19,4 +19,7 @@ public class QuickPlayRequest {
     @NotNull(message = "Boot amount in paise is required")
     @Min(value = 100, message = "Boot amount must be at least ₹1 (100 paise)")
     private Long bootAmountPaise;
+
+    /** Optional. Defaults to CLASSIC. */
+    private String gameVariant;
 }

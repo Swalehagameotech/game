@@ -1,6 +1,7 @@
 package com.teenpatti.platform.game.variant;
 
 import com.teenpatti.platform.table.GameVariant;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumMap;
@@ -11,6 +12,7 @@ import java.util.Map;
  * Resolves {@link GameVariantStrategy} for a table variant. Falls back to Classic for legacy aliases.
  */
 @Component
+@Slf4j
 public class GameVariantRegistry {
 
     private final Map<GameVariant, GameVariantStrategy> strategies = new EnumMap<>(GameVariant.class);
@@ -34,8 +36,8 @@ public class GameVariantRegistry {
             strategy = strategies.get(GameVariant.CLASSIC);
         }
         if (!strategy.isFullyImplemented()) {
-            throw new IllegalStateException(
-                    "Game variant " + resolved + " is not yet supported. Only CLASSIC is available.");
+            log.warn("Variant [{}] is using Classic fallback strategy until dedicated rules are enabled.", resolved);
+            strategy = strategies.get(GameVariant.CLASSIC);
         }
         return strategy;
     }

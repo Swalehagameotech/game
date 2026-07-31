@@ -65,11 +65,7 @@ public class TableController {
             @CurrentUser String userId,
             @PathVariable String tableId,
             @RequestBody com.teenpatti.platform.table.dto.PlayerActionRequest request) {
-        var response = tableService.processPlayerAction(
-                userId,
-                tableId,
-                request.getActionType(),
-                request.getAmountPaise());
+        var response = tableService.processPlayerAction(userId, tableId, request);
         return ResponseEntity.ok(ApiResponse.success("Action applied", response));
     }
 

@@ -14,6 +14,7 @@ import { useGame } from '@/context/GameContext';
 import { getNotificationDisplayLabel } from '@/features/notifications/notificationUtils';
 import { isActiveHandStatus, getTableStatusLabel, normalizeGameState, isCountdownStatus, isJoinableStatus } from '@/features/table/tableUtils';
 import HomeCasinoScreen from './HomeCasinoScreen';
+import { VARIANT_CARDS } from './variants';
 
 function formatHistoryDate(isoString) {
   if (!isoString) return '';
@@ -35,6 +36,7 @@ export default function LobbyView({
   onOpenWallet,
   onOpenLeaderboard,
   onOpenProfile,
+  onOpenNotifications,
 }) {
   const { user, isAuthenticated, refreshWalletBalance } = useAuth();
   const { updateTableState, notifications: liveNotifications } = useGame();
@@ -47,6 +49,10 @@ export default function LobbyView({
   const [selectedStake, setSelectedStake] = useState('ALL');
   const [error, setError] = useState('');
   const [bootOptionsPaise, setBootOptionsPaise] = useState([1000]);
+  const [selectedVariant, setSelectedVariant] = useState('CLASSIC');
+  const [selectedBootPaise, setSelectedBootPaise] = useState(1000);
+  const [showQuickPlayModal, setShowQuickPlayModal] = useState(false);
+  const [quickPlayModalVariant, setQuickPlayModalVariant] = useState('CLASSIC');
 
   // Private/Public Table Creation Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -95,6 +101,7 @@ export default function LobbyView({
         : [1000];
       setBootOptionsPaise(options);
       setCreateBootAmountPaise(options[0]);
+      setSelectedBootPaise(options[0]);
       setCreateMinPlayers(data?.minimumPlayers ?? 3);
       setCreateMaxPlayers(data?.maximumPlayers ?? 6);
     } catch {
@@ -135,8 +142,31 @@ export default function LobbyView({
     };
   }, [selectedStake, isAuthenticated]);
 
+  const handleSelectVariant = (variantKey) => {
+    setSelectedVariant(variantKey);
+  };
+
+  const openQuickPlayModal = (variantKey = selectedVariant, bootPaise = null) => {
+    if (!isAuthenticated) {
+      if (onOpenAuth) onOpenAuth();
+      return;
+    }
+    setQuickPlayModalVariant(variantKey || 'CLASSIC');
+    setSelectedVariant(variantKey || 'CLASSIC');
+    if (bootPaise != null && Number.isFinite(Number(bootPaise))) {
+      setSelectedBootPaise(Number(bootPaise));
+    }
+    setShowQuickPlayModal(true);
+    setError('');
+  };
+
+  const confirmQuickPlay = async () => {
+    setShowQuickPlayModal(false);
+    await handleQuickPlay(selectedBootPaise, quickPlayModalVariant);
+  };
+
   // 2. Quick Play Single-Click Matchmaking Handler
-  const handleQuickPlay = async (bootAmountPaise) => {
+  const handleQuickPlay = async (bootAmountPaise, variant = selectedVariant) => {
     if (!isAuthenticated) {
       if (onOpenAuth) onOpenAuth();
       return;
@@ -144,13 +174,22 @@ export default function LobbyView({
     setQuickPlayLoading(bootAmountPaise);
     setError('');
     try {
-      const { data: res } = await axiosClient.post('/tables/quick-play', { bootAmountPaise });
+      const { data: res } = await axiosClient.post('/tables/quick-play', {
+        bootAmountPaise,
+        gameVariant: variant || 'CLASSIC',
+      });
       const joinData = res?.data || res;
       if (refreshWalletBalance) refreshWalletBalance();
-      updateTableState(joinData);
-      const targetId = joinData.tableId || joinData.id;
+      const tablePayload = joinData.tableDetail || joinData;
+      updateTableState(normalizeGameState(tablePayload, user) || joinData);
+      const targetId = joinData.tableId
+        || joinData.id
+        || joinData.tableDetail?.tableId
+        || joinData.tableDetail?.id;
       if (targetId) {
         onJoinTable(targetId);
+      } else {
+        setError('Joined table but could not resolve table id. Try refreshing.');
       }
     } catch (err) {
       console.error('Quick Play error:', err);
@@ -214,6 +253,7 @@ export default function LobbyView({
         tableName: createTableName || undefined,
         stakeTier: createStakeTier,
         bootAmount: createBootAmountPaise,
+        gameVariant: selectedVariant,
         maxPlayers: createMaxPlayers,
         minPlayers: createMinPlayers,
       });
@@ -333,7 +373,6 @@ export default function LobbyView({
   return (
     <div>
       <HomeCasinoScreen
-        user={user}
         tables={tables}
         bootOptionsPaise={bootOptionsPaise}
         loading={loading}
@@ -342,8 +381,9 @@ export default function LobbyView({
         activeGame={activeGame}
         privateInvitations={privateInvitations}
         quickPlayLoading={quickPlayLoading}
-        onQuickPlay={handleQuickPlay}
-        onJoinTable={onJoinTable}
+        selectedVariant={selectedVariant}
+        onRequestQuickPlay={openQuickPlayModal}
+        onQuickPlay={openQuickPlayModal}
         onJoinTableClick={handleJoinTableClick}
         onOpenCreatePublic={() => {
           setCreateTableType('PUBLIC');
@@ -361,6 +401,8 @@ export default function LobbyView({
         onOpenWallet={onOpenWallet}
         onOpenLeaderboard={onOpenLeaderboard}
         onOpenProfile={onOpenProfile}
+        onOpenNotifications={onOpenNotifications}
+        onOpenAuth={onOpenAuth}
         onResumeGame={onJoinTable}
       />
 
@@ -412,6 +454,19 @@ export default function LobbyView({
                 </div>
               ) : (
                 <form onSubmit={handleCreateTableSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Variation</label>
+                    <select
+                      value={selectedVariant}
+                      onChange={(e) => setSelectedVariant(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                    >
+                      {VARIANT_CARDS.map((v) => (
+                        <option key={v.key} value={v.key}>{v.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Table Access</label>
                     <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 border border-slate-800 rounded-xl">
@@ -547,6 +602,71 @@ export default function LobbyView({
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Quick Play — boot amount picker */}
+      <AnimatePresence>
+        {showQuickPlayModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-sm bg-slate-900 border border-[#d4af37]/35 rounded-2xl p-6 shadow-2xl"
+            >
+              <h3 className="text-xl font-bold text-[#f5e6a8] mb-1">Choose Boot Amount</h3>
+              <p className="text-xs text-slate-400 mb-5">
+                Variation: <span className="text-[#d4af37] font-semibold">
+                  {(quickPlayModalVariant || 'CLASSIC').replaceAll('_', ' ')}
+                </span>
+                {' '}· Same boot + same variant matchmaking
+              </p>
+
+              <p className="text-xs font-semibold text-slate-300 mb-2">Boot amount (per player)</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-5">
+                {bootOptionsPaise.map((boot) => {
+                  const selected = selectedBootPaise === boot;
+                  return (
+                    <button
+                      key={boot}
+                      type="button"
+                      onClick={() => setSelectedBootPaise(boot)}
+                      className={`py-3 rounded-xl border text-sm font-extrabold transition-all cursor-pointer ${
+                        selected
+                          ? 'border-[#d4af37] bg-[#d4af37]/20 text-[#f5e6a8] shadow-[0_0_12px_rgba(212,175,55,0.25)]'
+                          : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-[#d4af37]/45'
+                      }`}
+                    >
+                      ₹{(boot / 100).toFixed(0)}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="text-[10px] text-slate-500 mb-4">
+                Minimum chips needed at table: boot × players (usually 3+). Your wallet will be checked on join.
+              </p>
+
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickPlayModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(quickPlayLoading)}
+                  onClick={confirmQuickPlay}
+                  className="px-5 py-2.5 bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[#1a0505] font-bold text-xs rounded-xl hover:brightness-110 cursor-pointer disabled:opacity-50"
+                >
+                  {quickPlayLoading ? 'Joining…' : `Play · ₹${(selectedBootPaise / 100).toFixed(0)} boot`}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

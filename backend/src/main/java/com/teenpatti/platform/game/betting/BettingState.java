@@ -32,4 +32,9 @@ public class BettingState {
     int turnTimerSeconds;
     boolean myTurn;
     List<String> allowedActions;
+    /** Pre-betting phase label: DISCARD | AUCTION | null */
+    String variantPhase;
+    long auctionHighBidPaise;
+    String auctionHighBidderId;
+    long auctionMinBidPaise;
 }

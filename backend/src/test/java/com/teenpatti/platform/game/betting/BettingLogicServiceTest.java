@@ -33,7 +33,11 @@ class BettingLogicServiceTest {
     void setUp() {
         walletService = mock(WalletService.class);
         eventPublisher = mock(WebSocketEventPublisher.class);
-        bettingLogicService = new BettingLogicService(walletService, eventPublisher, mock(com.teenpatti.platform.game.engine.HandContextManager.class));
+        bettingLogicService = new BettingLogicService(
+                walletService,
+                eventPublisher,
+                mock(com.teenpatti.platform.game.engine.HandContextManager.class),
+                mock(com.teenpatti.platform.game.variant.VariantPhaseTracker.class));
 
         GameEngineConfig config = new GameEngineConfig(1000L, 50_000L, 5.0, 2);
         engine = new BettingRoundEngine(config);

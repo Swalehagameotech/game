@@ -1,8 +1,58 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Award, Crown } from 'lucide-react';
 
-/** Premium winner overlay banner + confetti (UI only). */
+const WINNER_PAUSE_SECONDS = 5;
+const COIN_COUNT = 36;
+
+function FallingCoins() {
+  return (
+    <div
+      className="fixed inset-0 z-[39] pointer-events-none overflow-hidden"
+      aria-hidden
+    >
+      {[...Array(COIN_COUNT)].map((_, i) => {
+        const left = ((i * 29) % 97) + 1;
+        const delay = (i % 12) * 0.1;
+        const duration = 2.2 + (i % 7) * 0.3;
+        const size = 11 + (i % 5) * 3;
+        return (
+          <motion.span
+            key={i}
+            className="absolute rounded-full"
+            style={{
+              left: `${left}%`,
+              width: size,
+              height: size,
+              background:
+                'radial-gradient(circle at 30% 28%, #fff6c8 0%, #f5e6a8 28%, #d4af37 62%, #8a6a12 100%)',
+              boxShadow: '0 0 10px rgba(212,175,55,0.6), inset 0 1px 0 rgba(255,255,255,0.5)',
+              border: '1px solid rgba(166,124,0,0.55)',
+            }}
+            initial={{ top: '-10%', opacity: 0, rotate: 0 }}
+            animate={{
+              top: '112%',
+              opacity: [0, 1, 1, 0.9, 0],
+              rotate: 420 + i * 30,
+              x: [0, (i % 2 === 0 ? 22 : -22), (i % 3 === 0 ? -10 : 10)],
+            }}
+            transition={{
+              duration,
+              delay,
+              repeat: Infinity,
+              ease: 'linear',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Winner celebration overlay.
+ * - Winner: golden coins raining from top + simple "You Won" box with payout
+ * - Others: no coins — "{name} won" + "countdown will start in 5s", then next-round timer
+ */
 export default function WinnerEffects({
   show,
   winnerDisplayName,
@@ -11,96 +61,89 @@ export default function WinnerEffects({
   countdownSeconds,
   status,
   isSelfWinner,
-  participants,
 }) {
+  const [pauseSeconds, setPauseSeconds] = useState(WINNER_PAUSE_SECONDS);
+
+  useEffect(() => {
+    if (!show || status !== 'ROUND_END') {
+      return undefined;
+    }
+    setPauseSeconds(WINNER_PAUSE_SECONDS);
+    const id = setInterval(() => {
+      setPauseSeconds((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [show, status, winnerDisplayName]);
+
+  const nextRoundActive = status === 'NEXT_ROUND' && countdownSeconds > 0;
+  const payout = Number(winnerPayoutRupees || 0);
+
   return (
     <AnimatePresence>
       {show && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.85, y: 24 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.9, y: -12 }}
-          transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-          className="relative z-40 mb-4 mx-auto w-full max-w-3xl overflow-hidden rounded-3xl border-2 border-amber-400/60 bg-gradient-to-b from-amber-500/25 via-slate-950/95 to-slate-950 shadow-[0_0_60px_rgba(245,158,11,0.35)] backdrop-blur-xl"
-        >
-          {/* Rays */}
+        <>
+          {isSelfWinner && <FallingCoins />}
+
           <motion.div
-            className="absolute inset-0 pointer-events-none opacity-40"
-            style={{
-              background:
-                'repeating-conic-gradient(from 0deg at 50% 40%, rgba(251,191,36,0.35) 0deg 8deg, transparent 8deg 24deg)',
-            }}
-            animate={{ rotate: 360 }}
-            transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
-          />
+            initial={{ opacity: 0, y: 18, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ type: 'spring', stiffness: 280, damping: 24 }}
+            className="relative z-40 mx-auto w-full max-w-sm pointer-events-none"
+          >
+            <div className="rounded-2xl border border-[#d4af37]/40 bg-black/80 backdrop-blur-md px-6 py-7 text-center shadow-[0_10px_40px_rgba(0,0,0,0.6)]">
+              {isSelfWinner ? (
+                <>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[#d4af37]/85 mb-2">
+                    Congratulations
+                  </p>
+                  <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#f5e6a8] tracking-wide">
+                    You Won
+                  </h2>
+                  <p className="mt-3 text-2xl sm:text-3xl font-black text-white tabular-nums">
+                    ₹{payout.toFixed(0)}
+                  </p>
+                  {winningCategoryLabel && (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-wider text-white/50">
+                      {winningCategoryLabel}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/45 mb-2">
+                    Round over
+                  </p>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-wide">
+                    {winnerDisplayName || 'Player'} won
+                  </h2>
+                  <p className="mt-2 text-lg font-bold text-[#f5e6a8] tabular-nums">
+                    ₹{payout.toFixed(0)}
+                  </p>
+                  {winningCategoryLabel && (
+                    <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/40">
+                      {winningCategoryLabel}
+                    </p>
+                  )}
+                </>
+              )}
 
-          {/* Confetti */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {[...Array(24)].map((_, i) => (
-              <motion.span
-                key={i}
-                className="absolute w-2 h-2 rounded-sm"
-                style={{
-                  left: `${(i * 17) % 100}%`,
-                  background: i % 3 === 0 ? '#fbbf24' : i % 3 === 1 ? '#f43f5e' : '#34d399',
-                }}
-                initial={{ top: '-5%', rotate: 0, opacity: 1 }}
-                animate={{ top: '110%', rotate: 360 + i * 40, opacity: [1, 1, 0] }}
-                transition={{ duration: 2.2 + (i % 5) * 0.2, repeat: Infinity, delay: i * 0.08 }}
-              />
-            ))}
-          </div>
-
-          <div className="relative px-6 py-8 sm:px-10 sm:py-10 text-center">
-            <div className="flex items-center justify-center gap-3 text-amber-300 mb-4">
-              <Crown className="w-8 h-8 sm:w-10 sm:h-10 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]" />
-              <span className="font-black text-sm sm:text-base uppercase tracking-[0.35em]">
-                Winner
-              </span>
-              <Award className="w-8 h-8 sm:w-10 sm:h-10" />
-            </div>
-
-            <h2 className="text-4xl sm:text-6xl md:text-7xl font-black uppercase tracking-wide text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-yellow-300 to-amber-500 drop-shadow-[0_4px_24px_rgba(251,191,36,0.45)] leading-tight break-words">
-              {winnerDisplayName || 'Winner'}
-            </h2>
-
-            <p className="mt-4 text-2xl sm:text-3xl font-black text-slate-50">
-              Won ₹{Number(winnerPayoutRupees || 0).toFixed(2)}
-            </p>
-            <p className="mt-2 text-sm sm:text-base font-bold uppercase tracking-[0.2em] text-amber-300/90">
-              {winningCategoryLabel}
-            </p>
-
-            {countdownSeconds > 0 && (status === 'NEXT_ROUND' || status === 'ROUND_END') && (
-              <p className="mt-5 text-lg sm:text-xl font-black text-emerald-300 tabular-nums">
-                Next round in {countdownSeconds}s
-              </p>
-            )}
-
-            {isSelfWinner && (
-              <p className="mt-3 text-sm text-emerald-300 font-semibold">
-                Credited to your wallet
-              </p>
-            )}
-
-            {participants?.length > 1 && (
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
-                {participants.map((p) => (
-                  <span
-                    key={p.userId}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${
-                      p.winner
-                        ? 'bg-amber-500/25 border-amber-400 text-amber-100'
-                        : 'bg-slate-900/80 border-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {p.displayName}: {p.handDescription || p.handRank}
-                  </span>
-                ))}
+              <div className="mt-5 pt-4 border-t border-white/10">
+                {nextRoundActive ? (
+                  <p className="text-sm font-bold text-emerald-300 tabular-nums">
+                    Next round starts in {countdownSeconds}s
+                  </p>
+                ) : status === 'ROUND_END' ? (
+                  <p className="text-sm text-white/65">
+                    {pauseSeconds > 0
+                      ? `Next round countdown will start in ${pauseSeconds}s`
+                      : 'Starting countdown…'}
+                  </p>
+                ) : null}
               </div>
-            )}
-          </div>
-        </motion.div>
+            </div>
+          </motion.div>
+        </>
       )}
     </AnimatePresence>
   );

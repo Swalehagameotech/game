@@ -100,6 +100,47 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
       if (!cancelled) setIsTableLoading(false);
     });
 
+    const applyShowRequestPayload = (payload) => {
+      const targetId = String(payload?.targetUserId || payload?.targetId || '');
+      const requesterId = String(payload?.requesterId || payload?.requesterUserId || '');
+      const me = String(user?.id || '');
+      const requesterName = payload?.requesterDisplayName || 'Opponent';
+      if (!targetId && !requesterId) return;
+      if (targetId && me && targetId === me) {
+        setWsError('');
+        updateGameState((prev) => mergeGameState(prev, {
+          status: 'SHOW',
+          pendingShow: {
+            requesterId,
+            targetId,
+            requesterDisplayName: requesterName,
+          },
+          allowedActions: ['SHOW_ACCEPT', 'SHOW_REJECT'],
+          myTurn: true,
+          potPaise: payload?.potPaise ?? prev?.potPaise,
+        }, user));
+      } else if (requesterId && me && requesterId === me) {
+        setWsError(`Waiting for ${payload?.targetDisplayName || 'opponent'} to accept or decline Show…`);
+        updateGameState((prev) => mergeGameState(prev, {
+          status: 'SHOW',
+          pendingShow: { requesterId, targetId, requesterDisplayName: requesterName },
+          allowedActions: [],
+          myTurn: false,
+          potPaise: payload?.potPaise ?? prev?.potPaise,
+        }, user));
+      } else {
+        updateGameState((prev) => mergeGameState(prev, {
+          status: 'SHOW',
+          pendingShow: {
+            requesterId,
+            targetId,
+            requesterDisplayName: requesterName,
+          },
+          potPaise: payload?.potPaise ?? prev?.potPaise,
+        }, user));
+      }
+    };
+
     const handleWsMessage = (message) => {
       if (!message?.type) return;
 
@@ -120,7 +161,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                 requesterDisplayName: state.pendingShow.requesterDisplayName || 'Opponent',
               },
               allowedActions: isTarget
-                ? [...new Set([...(merged.allowedActions || []), ...(state.allowedActions || []), 'SHOW_ACCEPT'])]
+                ? [...new Set([...(merged.allowedActions || []), ...(state.allowedActions || []), 'SHOW_ACCEPT', 'SHOW_REJECT'])]
                 : (merged.allowedActions || []),
               myTurn: isTarget ? true : merged.myTurn,
             };
@@ -144,6 +185,122 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         });
         return;
       }
+
+      // Apply Show challenge instantly on raw WS — don't wait for STOMP / refresh.
+      if (message.type === 'SHOW_REQUEST' || message.type === 'SHOW_REQUESTED') {
+        applyShowRequestPayload(message.payload || message);
+        return;
+      }
+      if (message.type === 'SHOW_ACCEPTED') {
+        updateGameState((prev) => mergeGameState(prev, {
+          pendingShow: null,
+          allowedActions: [],
+          myTurn: false,
+        }, user, { clearPendingShow: true }));
+        // Still fan-out so STOMP listeners can process winner/reveal events
+      }
+      if (message.type === 'SHOW_REJECTED') {
+        updateGameState((prev) => mergeGameState(prev, {
+          pendingShow: null,
+          status: 'RUNNING',
+          myTurn: false,
+          allowedActions: [],
+        }, user, { clearPendingShow: true }));
+      }
+      if (message.type === 'WINNER_DECLARED' && message.payload) {
+        const payload = message.payload;
+        setLocalTurnSeconds(0);
+        const payout = Number(
+          payload.payoutPaise
+          ?? payload.winnerPayoutPaise
+          ?? payload.potPaise
+          ?? 0,
+        );
+        updateGameState((prev) => mergeGameState(prev, {
+          winnerSnapshot: {
+            ...payload,
+            payoutPaise: payout,
+            winnerPayoutPaise: payout,
+            winnerUserId: payload.winnerUserId || payload.winnerId,
+            winnerId: payload.winnerId || payload.winnerUserId,
+          },
+          handOutcome: {
+            winnerId: payload.winnerUserId || payload.winnerId,
+            winnerPayoutPaise: payout,
+            winningCategory: payload.winningCategory,
+            notes: payload.winningHandDescription || payload.notes,
+          },
+          status: 'ROUND_END',
+          countdownSeconds: 0,
+          nextRoundSeconds: prev?.nextRoundSeconds > 0 ? prev.nextRoundSeconds : 60,
+          myTurn: false,
+          allowedActions: [],
+          turnSecondsRemaining: 0,
+          turnDeadlineAt: null,
+          currentTurnPlayerId: null,
+          pendingShow: null,
+        }, user, { clearPendingShow: true }));
+      }
+      if (message.type === 'ROUND_FINISHED') {
+        const payload = message.payload;
+        const planned = typeof payload === 'number'
+          ? payload
+          : (payload?.nextRoundInSeconds ?? 60);
+        updateGameState((prev) => mergeGameState(prev, {
+          status: 'ROUND_END',
+          countdownSeconds: 0,
+          nextRoundSeconds: planned > 0 ? planned : (prev?.nextRoundSeconds || 60),
+          myTurn: false,
+          allowedActions: [],
+          pendingShow: null,
+        }, user, { clearPendingShow: true }));
+      }
+      if (message.type === 'NEXT_ROUND_COUNTDOWN') {
+        const payload = message.payload;
+        const seconds = typeof payload === 'number'
+          ? payload
+          : (payload?.secondsRemaining ?? payload?.countdownSeconds ?? 0);
+        updateGameState((prev) => mergeGameState(prev, {
+          status: seconds > 0 ? 'NEXT_ROUND' : prev?.status,
+          countdownSeconds: seconds,
+          nextRoundSeconds: seconds,
+          winnerSnapshot: prev?.winnerSnapshot,
+          handOutcome: prev?.handOutcome,
+        }, user));
+      }
+      if (message.type === 'NEXT_ROUND_STARTED' || message.type === 'GAME_STARTED' || message.type === 'GAME_RUNNING') {
+        // Fan-out to realtime handler below for full reset
+      }
+      if (message.type === 'BETTING_STATE' && message.payload) {
+        const payload = message.payload;
+        const isMine = !payload.userId || String(payload.userId) === String(user?.id);
+        const actions = Array.isArray(payload.allowedActions) ? payload.allowedActions : [];
+        const isShowRespond = actions.includes('SHOW_ACCEPT') || actions.includes('SHOW_REJECT');
+        if (isMine && isShowRespond) {
+          updateGameState((prev) => mergeGameState(prev, {
+            status: 'SHOW',
+            myTurn: true,
+            allowedActions: [...new Set([...actions, 'SHOW_ACCEPT', 'SHOW_REJECT'])],
+            potPaise: payload.potPaise ?? prev?.potPaise,
+            pendingShow: prev?.pendingShow || {
+              targetId: user?.id,
+              requesterId: '',
+              requesterDisplayName: 'Opponent',
+            },
+          }, user));
+          axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+            const data = res.data?.data || res.data;
+            if (data?.pendingShow) {
+              applyShowRequestPayload({
+                ...data.pendingShow,
+                targetUserId: data.pendingShow.targetId || data.pendingShow.targetUserId,
+                potPaise: data.potPaise,
+              });
+            }
+          }).catch(() => {});
+        }
+      }
+
       if (message.type === 'ACTION_REJECTED') {
         setWsError(message.reason || 'Action rejected');
         setTimeout(() => setWsError(''), 4000);
@@ -210,6 +367,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         RealTimeEventType.WINNER_DECLARED,
         RealTimeEventType.FINAL_HANDS_REVEALED,
         RealTimeEventType.SHOW_ACCEPTED,
+        RealTimeEventType.SHOW_REJECTED,
         RealTimeEventType.ROUND_FINISHED,
         RealTimeEventType.SHOW_REQUEST,
         RealTimeEventType.SHOW_REQUESTED,
@@ -225,6 +383,50 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
       if (!matchesTable) return;
 
       switch (event.eventType) {
+        case RealTimeEventType.STATE_UPDATE:
+        case 'GAME_STATE_UPDATE': {
+          const state = payload;
+          if (!state || typeof state !== 'object') break;
+          updateGameState((prev) => {
+            const merged = mergeGameState(prev, state, user);
+            if (state?.pendingShow) {
+              const targetId = state.pendingShow.targetId || state.pendingShow.targetUserId;
+              const isTarget = targetId && user?.id && String(targetId) === String(user.id);
+              return {
+                ...merged,
+                status: 'SHOW',
+                pendingShow: {
+                  requesterId: state.pendingShow.requesterId || state.pendingShow.requesterUserId,
+                  targetId,
+                  requesterDisplayName: state.pendingShow.requesterDisplayName || 'Opponent',
+                },
+                allowedActions: isTarget
+                  ? [...new Set([...(merged.allowedActions || []), ...(state.allowedActions || []), 'SHOW_ACCEPT', 'SHOW_REJECT'])]
+                  : (merged.allowedActions || []),
+                myTurn: isTarget ? true : merged.myTurn,
+              };
+            }
+            if (state?.winnerSnapshot && (state.status === 'ROUND_END' || state.status === 'NEXT_ROUND'
+              || merged.status === 'ROUND_END' || merged.status === 'NEXT_ROUND')) {
+              return {
+                ...merged,
+                winnerSnapshot: {
+                  ...state.winnerSnapshot,
+                  payoutPaise: state.winnerSnapshot.payoutPaise
+                    ?? state.winnerSnapshot.winnerPayoutPaise
+                    ?? state.handOutcome?.winnerPayoutPaise
+                    ?? merged.winnerSnapshot?.payoutPaise,
+                  winnerPayoutPaise: state.winnerSnapshot.winnerPayoutPaise
+                    ?? state.winnerSnapshot.payoutPaise,
+                },
+                handOutcome: state.handOutcome || merged.handOutcome,
+                status: state.status || merged.status || 'ROUND_END',
+              };
+            }
+            return merged;
+          });
+          break;
+        }
         case RealTimeEventType.COUNTDOWN_STARTED:
           applyCountdownPatch(typeof payload === 'number' ? payload : payload?.countdownSeconds ?? 5);
           break;
@@ -280,6 +482,25 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           if (turnPatch.turnSecondsRemaining != null) {
             setLocalTurnSeconds(turnPatch.turnSecondsRemaining);
           }
+          // When it becomes your turn with two active, refresh Show / action buttons live.
+          const myTurnNow = Boolean(turnUserId && user?.id && turnUserId === user.id);
+          if (myTurnNow) {
+            axiosClient.get(`/tables/${tableId}/betting-state`).then((res) => {
+              const betting = res.data?.data || res.data;
+              if (!betting) return;
+              updateGameState((prev) => {
+                const activeCount = (betting.activePlayerIds || prev?.activePlayerIds
+                  || (prev?.players || []).filter((p) => p.status !== 'PACKED').map((p) => p.userId)).length;
+                const actions = new Set(betting.allowedActions || []);
+                if (activeCount === 2 && betting.myTurn) actions.add('SHOW');
+                return mergeGameState(prev, {
+                  ...betting,
+                  myTurn: betting.myTurn,
+                  allowedActions: [...actions],
+                }, user);
+              });
+            }).catch(() => {});
+          }
           break;
         }
         case RealTimeEventType.TURN_ENDED: {
@@ -298,11 +519,13 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           if (payload && typeof payload === 'object') {
             const isMine = !payload.userId || String(payload.userId) === String(user?.id);
             updateGameState((prev) => {
-              const showTarget = prev?.pendingShow?.targetId
-                && user?.id
-                && String(prev.pendingShow.targetId) === String(user.id);
               const actions = Array.isArray(payload.allowedActions) ? [...payload.allowedActions] : [];
+              const isShowRespond = actions.includes('SHOW_ACCEPT') || actions.includes('SHOW_REJECT');
+              const showTarget = isShowRespond || (prev?.pendingShow?.targetId
+                && user?.id
+                && String(prev.pendingShow.targetId) === String(user.id));
               if (showTarget && !actions.includes('SHOW_ACCEPT')) actions.push('SHOW_ACCEPT');
+              if (showTarget && !actions.includes('SHOW_REJECT')) actions.push('SHOW_REJECT');
               return mergeGameState(prev, {
                 potPaise: payload.potPaise,
                 currentBaseStakePaise: payload.currentBaseStakePaise,
@@ -322,10 +545,37 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                   blindSeenRatio: payload.blindSeenRatio,
                   myTurn: showTarget ? true : payload.myTurn,
                   allowedActions: actions,
-                  ...(showTarget ? { status: 'SHOW' } : {}),
+                  ...(showTarget ? {
+                    status: 'SHOW',
+                    pendingShow: prev?.pendingShow || {
+                      targetId: user?.id,
+                      requesterId: '',
+                      requesterDisplayName: 'Opponent',
+                    },
+                  } : {}),
                 } : {}),
               }, user);
             });
+            const actions = Array.isArray(payload.allowedActions) ? payload.allowedActions : [];
+            if (isMine && (actions.includes('SHOW_ACCEPT') || actions.includes('SHOW_REJECT'))) {
+              axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+                const data = res.data?.data || res.data;
+                if (!data?.pendingShow) return;
+                const tid = data.pendingShow.targetId || data.pendingShow.targetUserId;
+                if (String(tid) !== String(user?.id)) return;
+                updateGameState((prev) => mergeGameState(prev, {
+                  status: 'SHOW',
+                  pendingShow: {
+                    requesterId: data.pendingShow.requesterId || data.pendingShow.requesterUserId,
+                    targetId: tid,
+                    requesterDisplayName: data.pendingShow.requesterDisplayName || 'Opponent',
+                  },
+                  allowedActions: ['SHOW_ACCEPT', 'SHOW_REJECT'],
+                  myTurn: true,
+                  potPaise: data.potPaise ?? prev?.potPaise,
+                }, user));
+              }).catch(() => {});
+            }
           }
           break;
         case RealTimeEventType.PLAYER_SEEN_CARDS:
@@ -359,18 +609,31 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         case RealTimeEventType.WINNER_DECLARED:
           if (payload && typeof payload === 'object') {
             setLocalTurnSeconds(0);
-            // Show winner immediately; next-round countdown starts ~5s later via NEXT_ROUND_COUNTDOWN
+            const payout = Number(
+              payload.payoutPaise
+              ?? payload.winnerPayoutPaise
+              ?? payload.potPaise
+              ?? 0,
+            );
             updateGameState((prev) => mergeGameState(prev, {
-              winnerSnapshot: payload,
+              winnerSnapshot: {
+                ...payload,
+                payoutPaise: payout,
+                winnerPayoutPaise: payout,
+                winnerUserId: payload.winnerUserId || payload.winnerId,
+                winnerId: payload.winnerId || payload.winnerUserId,
+              },
               handOutcome: {
                 winnerId: payload.winnerUserId || payload.winnerId,
-                winnerPayoutPaise: payload.payoutPaise,
+                winnerPayoutPaise: payout,
                 winningCategory: payload.winningCategory,
                 notes: payload.winningHandDescription || payload.notes,
               },
               status: 'ROUND_END',
               countdownSeconds: 0,
-              nextRoundSeconds: 0,
+              nextRoundSeconds: prev?.nextRoundSeconds > 0
+                ? prev.nextRoundSeconds
+                : (payload.nextRoundInSeconds || prev?.nextRoundInSeconds || 60),
               myTurn: false,
               allowedActions: [],
               turnSecondsRemaining: 0,
@@ -380,17 +643,114 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             }, user, { clearPendingShow: true }));
           }
           break;
-        case RealTimeEventType.SHOW_ENABLED:
-          // Backend signal only — buttons come from allowedActions / BETTING_STATE.
+        case RealTimeEventType.JOKER_REVEALED:
+          if (payload && typeof payload === 'object' && payload.jokerRank) {
+            updateGameState((prev) => mergeGameState(prev, {
+              jokerRank: payload.jokerRank,
+            }, user));
+          }
           break;
+        case RealTimeEventType.DISCARD_PHASE_STARTED:
+          updateGameState((prev) => mergeGameState(prev, {
+            variantPhase: 'DISCARD',
+          }, user));
+          break;
+        case RealTimeEventType.CARD_DISCARDED:
+          updateGameState((prev) => {
+            const selfId = user?.id;
+            const discardedId = payload?.userId;
+            const players = (prev?.players || []).map((p) => {
+              if (p.userId === discardedId && discardedId === selfId) {
+                const cards = Array.isArray(p.cards) ? p.cards : [];
+                const idx = payload?.cardIndex;
+                const nextCards = typeof idx === 'number' && idx >= 0 && idx < cards.length
+                  ? cards.filter((_, i) => i !== idx)
+                  : cards;
+                return { ...p, cards: nextCards, cardCount: nextCards.length || Math.max(0, (p.cardCount || 0) - 1) };
+              }
+              if (p.userId === discardedId) {
+                return { ...p, cardCount: Math.max(3, (p.cardCount || 4) - 1) };
+              }
+              return p;
+            });
+            return mergeGameState(prev, { players }, user);
+          });
+          break;
+        case RealTimeEventType.AUCTION_STARTED:
+          updateGameState((prev) => mergeGameState(prev, {
+            variantPhase: 'AUCTION',
+            auctionMinBidPaise: payload?.minBidPaise ?? prev?.auctionMinBidPaise ?? prev?.bootAmountPaise,
+            auctionHighBidPaise: 0,
+            auctionHighBidderId: null,
+          }, user));
+          break;
+        case RealTimeEventType.AUCTION_BID:
+          if (payload && typeof payload === 'object') {
+            updateGameState((prev) => mergeGameState(prev, {
+              auctionHighBidPaise: payload.highBidPaise ?? payload.amountPaise ?? prev?.auctionHighBidPaise,
+              auctionHighBidderId: payload.highBidderId ?? payload.userId ?? prev?.auctionHighBidderId,
+              potPaise: payload.potPaise ?? prev?.potPaise,
+            }, user));
+          }
+          break;
+        case RealTimeEventType.AUCTION_ENDED:
+          updateGameState((prev) => mergeGameState(prev, {
+            variantPhase: null,
+            jokerRank: payload?.jokerRank ?? prev?.jokerRank,
+            auctionHighBidPaise: payload?.highBidPaise ?? prev?.auctionHighBidPaise,
+            potPaise: payload?.potPaise ?? prev?.potPaise,
+          }, user));
+          break;
+        case RealTimeEventType.SHOW_ENABLED: {
+          // Force-enable Show when exactly two remain (don't wait solely on racing BETTING_STATE).
+          const activeIds = Array.isArray(payload?.activePlayerIds) ? payload.activePlayerIds : null;
+          const count = payload?.activePlayerCount ?? activeIds?.length ?? 2;
+          updateGameState((prev) => {
+            const activePlayerIds = activeIds
+              || (prev?.activePlayerIds || []).filter((id) => !(prev?.packedPlayerIds || []).includes(id));
+            const myId = user?.id;
+            const isActive = myId && (activePlayerIds.length
+              ? activePlayerIds.some((id) => String(id) === String(myId))
+              : true);
+            const onTurn = Boolean(
+              myId
+              && prev?.currentTurnPlayerId
+              && String(prev.currentTurnPlayerId) === String(myId),
+            );
+            const actions = new Set(prev?.allowedActions || []);
+            if (count === 2 && isActive && onTurn && prev?.playerState !== 'PACKED') {
+              actions.add('SHOW');
+            }
+            return mergeGameState(prev, {
+              activePlayerIds: activePlayerIds.length ? activePlayerIds : prev?.activePlayerIds,
+              ...(actions.has('SHOW') ? {
+                allowedActions: [...actions],
+                myTurn: true,
+              } : {}),
+            }, user);
+          });
+          // Refresh authoritative buttons for the player now on turn.
+          axiosClient.get(`/tables/${tableId}/betting-state`).then((res) => {
+            const betting = res.data?.data || res.data;
+            if (!betting) return;
+            updateGameState((prev) => mergeGameState(prev, {
+              ...betting,
+              myTurn: betting.myTurn,
+              allowedActions: betting.allowedActions || prev?.allowedActions,
+              activePlayerIds: activeIds || betting.activePlayerIds || prev?.activePlayerIds,
+            }, user));
+          }).catch(() => {});
+          break;
+        }
         case RealTimeEventType.ROUND_FINISHED: {
           // Keep ROUND_END + winner visible; countdown arrives later via NEXT_ROUND_COUNTDOWN
+          const planned = typeof payload === 'number'
+            ? payload
+            : (payload?.nextRoundInSeconds ?? 60);
           updateGameState((prev) => mergeGameState(prev, {
             status: 'ROUND_END',
             countdownSeconds: 0,
-            nextRoundSeconds: typeof payload === 'number'
-              ? payload
-              : (payload?.nextRoundInSeconds ?? prev?.nextRoundSeconds ?? 60),
+            nextRoundSeconds: planned > 0 ? planned : (prev?.nextRoundSeconds || 60),
             myTurn: false,
             allowedActions: [],
             pendingShow: null,
@@ -402,9 +762,12 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             ? payload
             : (payload?.secondsRemaining ?? payload?.countdownSeconds ?? 0);
           updateGameState((prev) => mergeGameState(prev, {
-            status: 'NEXT_ROUND',
+            status: seconds > 0 ? 'NEXT_ROUND' : (prev?.status === 'NEXT_ROUND' ? 'NEXT_ROUND' : 'ROUND_END'),
             countdownSeconds: seconds,
             nextRoundSeconds: seconds,
+            // Keep winner banner visible during countdown
+            winnerSnapshot: prev?.winnerSnapshot,
+            handOutcome: prev?.handOutcome,
           }, user));
           break;
         }
@@ -449,9 +812,10 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         case RealTimeEventType.CARDS_DISTRIBUTED:
           updateGameState((prev) => mergeGameState(prev, {
             status: prev?.status || 'RUNNING',
+            variantPhase: prev?.gameVariant === 'DISCARD_ONE' ? 'DISCARD' : prev?.variantPhase,
             players: (prev?.players || []).map((p) => ({
               ...p,
-              cardCount: p.cardCount > 0 ? p.cardCount : 3,
+              cardCount: p.cardCount > 0 ? p.cardCount : (prev?.gameVariant === 'DISCARD_ONE' ? 4 : 3),
               cards: Array.isArray(p.cards) ? p.cards : [],
             })),
           }, user));
@@ -564,10 +928,13 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                 p.userId === packedId ? { ...p, status: 'PACKED' } : p
               ));
               const packedPlayerIds = [...new Set([...(prev?.packedPlayerIds || []), packedId])];
+              const activePlayerIds = (prev?.activePlayerIds || [])
+                .filter((id) => String(id) !== String(packedId));
               const selfPacked = packedId === user?.id;
               return mergeGameState(prev, {
                 players,
                 packedPlayerIds,
+                activePlayerIds,
                 ...(selfPacked ? {
                   myTurn: false,
                   allowedActions: [],
@@ -622,12 +989,12 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                 targetId,
                 requesterDisplayName: requesterName,
               },
-              allowedActions: ['SHOW_ACCEPT'],
+              allowedActions: ['SHOW_ACCEPT', 'SHOW_REJECT'],
               myTurn: true,
               potPaise: payload?.potPaise ?? prev?.potPaise,
             }, user));
           } else if (requesterId && me && requesterId === me) {
-            setWsError(`Waiting for ${payload?.targetDisplayName || 'opponent'} to accept Show…`);
+            setWsError(`Waiting for ${payload?.targetDisplayName || 'opponent'} to accept or decline Show…`);
             updateGameState((prev) => mergeGameState(prev, {
               status: 'SHOW',
               pendingShow: { requesterId, targetId, requesterDisplayName: requesterName },
@@ -635,8 +1002,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               myTurn: false,
               potPaise: payload?.potPaise ?? prev?.potPaise,
             }, user));
-          } else if (payload?.tableId === tableId || !payload?.tableId) {
-            // Other seated players — still mark table in SHOW so state stays in sync
+          } else {
             updateGameState((prev) => mergeGameState(prev, {
               status: 'SHOW',
               pendingShow: {
@@ -646,6 +1012,26 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               },
               potPaise: payload?.potPaise ?? prev?.potPaise,
             }, user));
+          }
+          // If we are the target but somehow missed names, hydrate from live projection.
+          if (targetId && me && targetId === me) {
+            axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+              const data = res.data?.data || res.data;
+              if (!data?.pendingShow) return;
+              const tid = data.pendingShow.targetId || data.pendingShow.targetUserId;
+              if (String(tid) !== me) return;
+              updateGameState((prev) => mergeGameState(prev, {
+                status: 'SHOW',
+                pendingShow: {
+                  requesterId: data.pendingShow.requesterId || data.pendingShow.requesterUserId,
+                  targetId: tid,
+                  requesterDisplayName: data.pendingShow.requesterDisplayName || requesterName,
+                },
+                allowedActions: ['SHOW_ACCEPT', 'SHOW_REJECT'],
+                myTurn: true,
+                potPaise: data.potPaise ?? prev?.potPaise,
+              }, user));
+            }).catch(() => {});
           }
           break;
         }
@@ -676,6 +1062,15 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             pendingShow: null,
             allowedActions: [],
             myTurn: false,
+          }, user, { clearPendingShow: true }));
+          break;
+        case RealTimeEventType.SHOW_REJECTED:
+          setWsError('');
+          updateGameState((prev) => mergeGameState(prev, {
+            pendingShow: null,
+            status: 'RUNNING',
+            myTurn: false,
+            allowedActions: [],
           }, user, { clearPendingShow: true }));
           break;
         case RealTimeEventType.FINAL_HANDS_REVEALED: {
@@ -771,7 +1166,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     };
   }, [tableId, user?.id, updateGameState]);
 
-  const sendPlayerAction = async (actionType, multiplier = 1) => {
+  const sendPlayerAction = async (actionType, multiplier = 1, extra = {}) => {
     if (!tableId || actionLoading) return;
     setActionLoading(true);
     setWsError('');
@@ -818,7 +1213,9 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         ? (Array.isArray(gameState?.raiseOptionsPaise) && gameState.raiseOptionsPaise.length
             ? gameState.raiseOptionsPaise[0]
             : (gameState?.minRaiseBetPaise || 0))
-        : 0; // Blind/Chaal/Show/Pack/SideShow amounts are server-authoritative
+        : actionType === 'AUCTION_BID'
+          ? (extra.amountPaise || gameState?.auctionMinBidPaise || gameState?.bootAmountPaise || 0)
+          : 0; // Blind/Chaal/Show/Pack/SideShow amounts are server-authoritative
 
       const restActionType = (actionType === 'BLIND') ? 'PLAY_BLIND' : actionType;
 
@@ -827,6 +1224,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         const res = await axiosClient.post(`/tables/${tableId}/actions`, {
           actionType: restActionType,
           amountPaise,
+          ...(extra.cardIndex != null ? { cardIndex: extra.cardIndex } : {}),
         });
         const betting = res.data?.data || res.data;
         if (betting && typeof betting === 'object') {
@@ -834,6 +1232,9 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           if (selfPacked) {
             setLocalTurnSeconds(0);
           }
+          const showRespond = Array.isArray(betting.allowedActions)
+            && (betting.allowedActions.includes('SHOW_ACCEPT')
+              || betting.allowedActions.includes('SHOW_REJECT'));
           updateGameState((prev) => mergeGameState(prev, {
             potPaise: betting.potPaise ?? prev?.potPaise,
             currentBaseStakePaise: betting.currentBaseStakePaise ?? prev?.currentBaseStakePaise,
@@ -846,8 +1247,24 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             raiseOptionsPaise: betting.raiseOptionsPaise,
             walletBalancePaise: betting.walletBalancePaise,
             playerState: betting.playerState,
-            myTurn: selfPacked ? false : betting.myTurn,
+            myTurn: selfPacked ? false : (showRespond ? true : betting.myTurn),
             allowedActions: betting.allowedActions || [],
+            ...(restActionType === 'SHOW' ? {
+              status: 'SHOW',
+              pendingShow: prev?.pendingShow || {
+                requesterId: user?.id,
+                targetId: '',
+                requesterDisplayName: user?.displayName || 'You',
+              },
+            } : {}),
+            ...(showRespond ? {
+              status: 'SHOW',
+              pendingShow: prev?.pendingShow || {
+                targetId: user?.id,
+                requesterId: '',
+                requesterDisplayName: 'Opponent',
+              },
+            } : {}),
             ...(selfPacked ? {
               turnSecondsRemaining: 0,
               turnDeadlineAt: null,
@@ -862,6 +1279,24 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             window.dispatchEvent(new CustomEvent('wallet:updated', {
               detail: { balancePaise: betting.walletBalancePaise },
             }));
+          }
+          // After Show request, hydrate pendingShow for Accept/Decline UI immediately.
+          if (restActionType === 'SHOW' || showRespond) {
+            axiosClient.get(`/tables/${tableId}/live`).then((liveRes) => {
+              const data = liveRes.data?.data || liveRes.data;
+              if (!data?.pendingShow) return;
+              updateGameState((prev) => mergeGameState(prev, {
+                status: 'SHOW',
+                pendingShow: {
+                  requesterId: data.pendingShow.requesterId || data.pendingShow.requesterUserId,
+                  targetId: data.pendingShow.targetId || data.pendingShow.targetUserId,
+                  requesterDisplayName: data.pendingShow.requesterDisplayName || 'Opponent',
+                },
+                potPaise: data.potPaise ?? prev?.potPaise,
+                allowedActions: showRespond ? ['SHOW_ACCEPT', 'SHOW_REJECT'] : (prev?.allowedActions || []),
+                myTurn: showRespond,
+              }, user));
+            }).catch(() => {});
           }
         }
         wsGameService.sendMessage('JOIN_TABLE', tableId, {});
@@ -883,6 +1318,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
 
       const sent = wsGameService.sendMessage(restActionType, tableId, {
         amountPaise,
+        ...(extra.cardIndex != null ? { cardIndex: extra.cardIndex } : {}),
       });
       if (!sent) {
         setWsError('Not connected — reconnecting…');
@@ -930,11 +1366,13 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     if (status !== 'NEXT_ROUND' && status !== 'ROUND_END') return undefined;
     if (!countdownSeconds || countdownSeconds <= 0) return undefined;
     const id = setInterval(() => {
+      let hitZero = false;
       updateGameState((prev) => {
         const cur = prev?.countdownSeconds ?? 0;
         if (cur <= 0) return prev;
         const next = Math.max(0, cur - 1);
         if (next === cur) return prev;
+        if (next <= 0) hitZero = true;
         return {
           ...prev,
           countdownSeconds: next,
@@ -942,9 +1380,142 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           status: next > 0 ? 'NEXT_ROUND' : (prev?.status || 'NEXT_ROUND'),
         };
       });
+      if (hitZero) {
+        axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+          const data = res.data?.data || res.data;
+          if (data) updateGameState((p) => mergeGameState(p, data, user));
+        }).catch(() => {});
+        wsGameService.sendMessage('JOIN_TABLE', tableId, {});
+      }
     }, 1000);
     return () => clearInterval(id);
-  }, [status, countdownSeconds > 0, updateGameState]);
+  }, [status, countdownSeconds > 0, tableId, user, updateGameState]);
+
+  // Live sync bridge: poll /live so Show Accept/Decline + Winner never wait for a refresh.
+  useEffect(() => {
+    if (!tableId) return undefined;
+    const liveStatuses = ['RUNNING', 'IN_PROGRESS', 'PLAYING', 'SHOW', 'ROUND_END', 'NEXT_ROUND', 'STARTING'];
+    if (!liveStatuses.includes(status)) return undefined;
+
+    const syncLive = () => {
+      axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+        const data = res.data?.data || res.data;
+        if (!data) return;
+        updateGameState((prev) => {
+          const next = mergeGameState(prev, data, user);
+          if (data.pendingShow) {
+            const tid = data.pendingShow.targetId || data.pendingShow.targetUserId;
+            const isTarget = tid && user?.id && String(tid) === String(user.id);
+            return {
+              ...next,
+              status: 'SHOW',
+              pendingShow: {
+                requesterId: data.pendingShow.requesterId || data.pendingShow.requesterUserId,
+                targetId: tid,
+                requesterDisplayName: data.pendingShow.requesterDisplayName || 'Opponent',
+              },
+              allowedActions: isTarget
+                ? [...new Set([...(next.allowedActions || []), ...(data.allowedActions || []), 'SHOW_ACCEPT', 'SHOW_REJECT'])]
+                : (next.allowedActions || []),
+              myTurn: isTarget ? true : next.myTurn,
+            };
+          }
+          if (data.winnerSnapshot && (data.status === 'ROUND_END' || data.status === 'NEXT_ROUND'
+            || prev?.status === 'ROUND_END' || prev?.status === 'NEXT_ROUND')) {
+            const snap = data.winnerSnapshot;
+            const payout = Number(
+              snap.payoutPaise ?? snap.winnerPayoutPaise ?? data.handOutcome?.winnerPayoutPaise ?? snap.potPaise ?? 0,
+            );
+            return {
+              ...next,
+              status: data.status || prev?.status || 'ROUND_END',
+              winnerSnapshot: {
+                ...snap,
+                payoutPaise: payout,
+                winnerPayoutPaise: payout,
+                winnerUserId: snap.winnerUserId || snap.winnerId,
+              },
+              handOutcome: data.handOutcome || {
+                winnerId: snap.winnerUserId || snap.winnerId,
+                winnerPayoutPaise: payout,
+                winningCategory: snap.winningCategory,
+              },
+              countdownSeconds: data.countdownSeconds ?? next.countdownSeconds,
+            };
+          }
+          return next;
+        });
+      }).catch(() => {});
+    };
+
+    syncLive();
+    const id = setInterval(syncLive, 1500);
+    return () => clearInterval(id);
+  }, [tableId, status, user?.id, updateGameState]);
+
+  // After winner banner (~5s), ensure next-round countdown starts even if server event was missed.
+  useEffect(() => {
+    if (status !== 'ROUND_END') return undefined;
+    if (!gameState?.winnerSnapshot && !gameState?.handOutcome) return undefined;
+
+    const winnerDisplayMs = 5200;
+    const timer = setTimeout(() => {
+      axiosClient.get(`/tables/${tableId}/live`).then((res) => {
+        const data = res.data?.data || res.data;
+        if (!data) return;
+        updateGameState((prev) => {
+          if (prev?.status === 'RUNNING' || prev?.status === 'STARTING') return prev;
+          const serverStatus = data.status;
+          const secs = data.countdownSeconds
+            ?? data.nextRoundSeconds
+            ?? prev?.nextRoundSeconds
+            ?? 60;
+          if (serverStatus === 'NEXT_ROUND' || (secs > 0 && serverStatus === 'ROUND_END')) {
+            return mergeGameState(prev, {
+              ...data,
+              status: 'NEXT_ROUND',
+              countdownSeconds: secs > 0 ? secs : (prev?.nextRoundSeconds || 60),
+              nextRoundSeconds: secs > 0 ? secs : (prev?.nextRoundSeconds || 60),
+              winnerSnapshot: data.winnerSnapshot || prev?.winnerSnapshot,
+              handOutcome: data.handOutcome || prev?.handOutcome,
+            }, user);
+          }
+          if (serverStatus === 'WAITING' || serverStatus === 'CLOSED') {
+            return mergeGameState(prev, data, user);
+          }
+          // Server still ROUND_END — start local countdown from planned delay
+          const planned = prev?.nextRoundSeconds > 0 ? prev.nextRoundSeconds : 60;
+          return mergeGameState(prev, {
+            status: 'NEXT_ROUND',
+            countdownSeconds: planned,
+            nextRoundSeconds: planned,
+            winnerSnapshot: prev?.winnerSnapshot,
+            handOutcome: prev?.handOutcome,
+          }, user);
+        });
+      }).catch(() => {
+        updateGameState((prev) => {
+          if (prev?.status !== 'ROUND_END') return prev;
+          const planned = prev?.nextRoundSeconds > 0 ? prev.nextRoundSeconds : 60;
+          return {
+            ...prev,
+            status: 'NEXT_ROUND',
+            countdownSeconds: planned,
+            nextRoundSeconds: planned,
+          };
+        });
+      });
+    }, winnerDisplayMs);
+
+    return () => clearTimeout(timer);
+  }, [
+    status,
+    tableId,
+    user,
+    updateGameState,
+    gameState?.winnerSnapshot?.winnerUserId || gameState?.winnerSnapshot?.winnerId,
+    gameState?.handOutcome?.winnerId,
+  ]);
   const canStart = !isTableLoading
     && status
     && (status === 'WAITING' || status === 'ROUND_END')
@@ -971,9 +1542,12 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
 
   const currentTurnUserId = gameState?.currentTurnPlayerId;
   const allowedActions = gameState?.allowedActions || [];
-  const isMyTurn = Boolean(currentTurnUserId && user?.id && currentTurnUserId === user.id);
+  const isMyTurn = (gameState != null && 'myTurn' in gameState)
+    ? Boolean(gameState.myTurn)
+    : Boolean(currentTurnUserId && user?.id && currentTurnUserId === user.id);
   const myPlayer = players.find((p) => p.userId === user?.id);
   const myStatus = myPlayer?.status || 'BLIND';
+  const myCards = myPlayer?.cards || [];
   const potRupees = (gameState?.potPaise || 0) / 100;
   const requiredBetRupees = (gameState?.requiredBetPaise || 0) / 100;
   const blindBetRupees = (gameState?.blindAmountPaise || 0) / 100;
@@ -984,7 +1558,16 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
   const winnerSnapshot = gameState?.winnerSnapshot;
   const winnerDisplayName = winnerSnapshot?.winnerDisplayName
     || (handOutcome?.winnerId === user?.id ? (user?.displayName || 'You') : null);
-  const winnerPayoutRupees = ((winnerSnapshot?.payoutPaise ?? handOutcome?.winnerPayoutPaise) || 0) / 100;
+  const winnerPayoutRupees = (
+    Number(
+      winnerSnapshot?.payoutPaise
+      ?? winnerSnapshot?.winnerPayoutPaise
+      ?? handOutcome?.winnerPayoutPaise
+      ?? handOutcome?.payoutPaise
+      ?? winnerSnapshot?.potPaise
+      ?? 0,
+    ) / 100
+  );
   const winningCategoryLabel = winnerSnapshot?.winningHandDescription
     || winnerSnapshot?.winningCategory
     || handOutcome?.winningCategory
@@ -1006,9 +1589,18 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
     || (currentTurnUserId === user?.id ? (user?.displayName || 'You') : null)
     || (currentTurnUserId ? `Player` : null);
   const canAct = (action) => {
-    if (action === 'SHOW_ACCEPT' && isShowTarget) return true;
+    if ((action === 'SHOW_ACCEPT' || action === 'SHOW_REJECT') && isShowTarget) return true;
     if (!handInProgress && status !== 'SHOW') return false;
-    return allowedActions.includes(action);
+    if (allowedActions.includes(action)) return true;
+    // Live fallback: Show must light up whenever exactly two active players remain on your turn.
+    if (action === 'SHOW' && isMyTurn && myStatus !== 'PACKED') {
+      const fromIds = (gameState?.activePlayerIds || []).filter(Boolean);
+      const activeCount = fromIds.length > 0
+        ? fromIds.length
+        : players.filter((p) => p.status && p.status !== 'PACKED').length;
+      return activeCount === 2;
+    }
+    return false;
   };
   const dealerSeatIndex = gameState?.dealerSeatIndex ?? -1;
 
@@ -1091,6 +1683,14 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               {gameState?.inviteCode || tableId?.slice(-8) || '—'}
             </button>
           </div>
+          <div className="hidden sm:block">
+            Variant: {(gameState?.gameVariant || 'CLASSIC').replaceAll('_', ' ')}
+          </div>
+          {gameState?.jokerRank && (
+            <div className="hidden sm:block">
+              Joker: {String(gameState.jokerRank).replaceAll('_', ' ')}
+            </div>
+          )}
           <div className="hidden sm:block">Boot: {formatChipAmount(gameState?.bootAmountPaise || 0)}</div>
           <div className="hidden sm:block">Max Players: {maxPlayers}</div>
         </div>
@@ -1142,8 +1742,8 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
       </div>
 
       {/* Main row (landscape): table + actions packed for short height */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-2 sm:px-3 pt-6 sm:pt-8 pb-2 min-h-0">
-        <div className="relative w-full max-w-[1480px] flex justify-center shrink min-h-0 max-h-[min(62dvh,720px)] sm:max-h-[min(72dvh,820px)] -translate-y-2 sm:-translate-y-4">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-2 sm:px-3 pt-4 sm:pt-8 pb-2 min-h-0">
+        <div className="relative w-full max-w-[1480px] flex justify-center shrink min-h-0 max-h-[min(52dvh,380px)] sm:max-h-[min(62dvh,720px)] md:max-h-[min(72dvh,820px)] -translate-y-0 sm:-translate-y-4">
           <TableArena
             players={players}
             myUserId={user?.id}
@@ -1203,6 +1803,11 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               sideShowCost={(gameState?.sideShowCostPaise || gameState?.chaalAmountPaise || 0) / 100}
               showCost={(gameState?.showCostPaise || gameState?.chaalAmountPaise || 0) / 100}
               wsError={wsError}
+              variantPhase={gameState?.variantPhase}
+              auctionHighBidPaise={gameState?.auctionHighBidPaise}
+              auctionMinBidPaise={gameState?.auctionMinBidPaise}
+              myCards={myCards}
+              onDiscardCard={(idx) => sendPlayerAction('DISCARD_CARD', 1, { cardIndex: idx })}
             />
           ) : null}
         </div>
@@ -1216,7 +1821,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
           <span>Boot Amount: <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
         </div>
 
-        {handInProgress && isMyTurn && myStatus !== 'PACKED' && (
+        {handInProgress && (isMyTurn || gameState?.variantPhase) && myStatus !== 'PACKED' && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1263,16 +1868,26 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               <h3 className="text-xl font-black text-amber-100 mb-2">Show Requested</h3>
               <p className="text-sm text-slate-300 mb-6">
                 {pendingShow.requesterDisplayName || 'Your opponent'} has requested a Show.
-                {myStatus === 'SEEN' ? '' : ' Your cards are now visible to you only.'}
+                Accept to reveal both hands and declare the winner, or Decline to continue betting.
               </p>
-              <button
-                type="button"
-                onClick={() => sendPlayerAction('SHOW_ACCEPT')}
-                disabled={actionLoading || !canAct('SHOW_ACCEPT')}
-                className="w-full px-6 py-3 rounded-full bg-black/40 text-[#f5e6a8] font-black text-sm cursor-pointer disabled:opacity-50 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_20px_rgba(212,175,55,0.35)]"
-              >
-                Accept Show
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => sendPlayerAction('SHOW_ACCEPT')}
+                  disabled={actionLoading || !canAct('SHOW_ACCEPT')}
+                  className="flex-1 px-6 py-3 rounded-full bg-black/40 text-[#f5e6a8] font-black text-sm cursor-pointer disabled:opacity-50 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_20px_rgba(212,175,55,0.35)]"
+                >
+                  Accept Show
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sendPlayerAction('SHOW_REJECT')}
+                  disabled={actionLoading || !canAct('SHOW_REJECT')}
+                  className="flex-1 px-6 py-3 rounded-full bg-rose-950/50 text-rose-200 font-black text-sm cursor-pointer disabled:opacity-50 shadow-[0_0_0_1.5px_rgba(244,63,94,0.55)]"
+                >
+                  Decline
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -1292,8 +1907,13 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             winningCategoryLabel={winningCategoryLabel}
             countdownSeconds={countdownSeconds}
             status={status}
-            isSelfWinner={winnerSnapshot?.winnerUserId === user?.id}
-            participants={winnerSnapshot?.participants}
+            isSelfWinner={
+              Boolean(user?.id) && (
+                String(winnerSnapshot?.winnerUserId || '') === String(user.id)
+                || String(winnerSnapshot?.winnerId || '') === String(user.id)
+                || String(handOutcome?.winnerId || '') === String(user.id)
+              )
+            }
           />
         </div>
       </div>
