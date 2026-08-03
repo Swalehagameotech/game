@@ -55,8 +55,8 @@ public class GameStateProjector {
         }
 
         List<String> seatedIds = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds() : List.of();
-        Map<String, String> displayNameMap = userRepository.findAllById(seatedIds).stream()
-                .collect(Collectors.toMap(User::getId, u -> u.getDisplayName() != null ? u.getDisplayName() : "Player"));
+        Map<String, User> userMap = userRepository.findAllById(seatedIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
 
         HandOutcome outcome = engine != null ? engine.getOutcome() : null;
         Map<String, List<Card>> showdownRevealed = outcome != null ? outcome.getRevealedHands() : Map.of();
@@ -91,10 +91,16 @@ public class GameStateProjector {
             // Rule 3: Otherwise, cards remain NULL (hidden from recipient)
 
             boolean connected = sessionRegistry.isUserConnected(pid);
+            User seatedUser = userMap.get(pid);
+            if (seatedUser != null && seatedUser.isBot()) {
+                connected = true; // bots have no WS session — still appear online
+            }
 
             playerViews.add(PlayerSummaryView.builder()
                     .userId(pid)
-                    .displayName(displayNameMap.getOrDefault(pid, "Player"))
+                    .displayName(seatedUser != null && seatedUser.getDisplayName() != null
+                            ? seatedUser.getDisplayName() : "Player")
+                    .avatarUrl(seatedUser != null ? seatedUser.getAvatarUrl() : null)
                     .status(status)
                     .totalContributedPaise(0L) // Can be populated if tracked
                     .cards(visibleCards)
@@ -157,7 +163,8 @@ public class GameStateProjector {
         if (!handEnded && allowedActions != null
                 && (allowedActions.contains("SHOW_ACCEPT")
                 || allowedActions.contains("SHOW_REJECT")
-                || allowedActions.contains("SIDE_SHOW_ACCEPT"))) {
+                || allowedActions.contains("SIDE_SHOW_ACCEPT")
+                || allowedActions.contains("SIDE_SHOW_REJECT"))) {
             myTurn = true;
         }
 
@@ -166,10 +173,12 @@ public class GameStateProjector {
             var pendingOpt = handContextManager.getPendingShow(table.getId());
             if (pendingOpt.isPresent()) {
                 var pending = pendingOpt.get();
+                User requester = userMap.get(pending.requesterId());
                 pendingShowView = PendingShowView.builder()
                         .requesterId(pending.requesterId())
                         .targetId(pending.targetId())
-                        .requesterDisplayName(displayNameMap.getOrDefault(pending.requesterId(), "Player"))
+                        .requesterDisplayName(requester != null && requester.getDisplayName() != null
+                                ? requester.getDisplayName() : "Player")
                         .build();
             }
         }

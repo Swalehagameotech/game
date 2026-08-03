@@ -14,6 +14,8 @@ import com.teenpatti.platform.wallet.WalletService;
 import com.teenpatti.platform.wallet.dto.WalletBalanceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
@@ -48,6 +50,10 @@ public class TableService {
     private final PrivateTableService privateTableService;
     private final HostManagementService hostManagementService;
     private final com.teenpatti.platform.websocket.GameBroadcastService gameBroadcastService;
+
+    @Autowired
+    @Lazy
+    private com.teenpatti.platform.matchmaking.MatchmakingService matchmakingService;
 
     public List<Table> getTablesByStatus(TableStatus status) {
         return tableRepository.findByStatus(status);
@@ -183,6 +189,8 @@ public class TableService {
 
         if (updatedCount == 0) {
             closeEmptyTable(tableId);
+        } else if (matchmakingService != null) {
+            matchmakingService.cleanupBotsIfNoHumans(tableId);
         }
 
         if (isActiveHandStatus(currentStatus)) {
@@ -220,13 +228,15 @@ public class TableService {
 
     /**
      * Personalized live hand projection (same shape as WS STATE_UPDATE) for refresh/reconnect.
+     * Public tables may be polled before the join seat is confirmed; private tables still require a seat.
      */
     public com.teenpatti.platform.websocket.dto.PlayerViewGameState getLivePlayerView(String userId, String tableId) {
         Table table = tableRepository.findById(tableId)
                 .orElseThrow(() -> new TableNotFoundException("Table not found: " + tableId));
 
-        if (table.getSeatedPlayerIds() == null || !table.getSeatedPlayerIds().contains(userId)) {
-            throw new PlayerNotSeatedException("Player is not seated at table: " + tableId);
+        boolean seated = table.getSeatedPlayerIds() != null && table.getSeatedPlayerIds().contains(userId);
+        if (table.getTableType() == TableType.PRIVATE && !seated) {
+            throw new TableNotFoundException("Private table not found or user not authorized.");
         }
 
         com.teenpatti.platform.game.engine.BettingRoundEngine engine =
@@ -505,14 +515,18 @@ public class TableService {
 
     private TableDetailResponse buildTableDetailResponse(Table table) {
         List<String> seatedIds = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds() : List.of();
-        Map<String, String> displayNameMap = userRepository.findAllById(seatedIds).stream()
-                .collect(Collectors.toMap(User::getId, u -> u.getDisplayName() != null ? u.getDisplayName() : "Player"));
+        Map<String, User> userMap = userRepository.findAllById(seatedIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
 
         List<SeatedPlayerResponse> seatedPlayers = seatedIds.stream()
-                .map(id -> SeatedPlayerResponse.builder()
-                        .userId(id)
-                        .displayName(displayNameMap.getOrDefault(id, "Player"))
-                        .build())
+                .map(id -> {
+                    User u = userMap.get(id);
+                    return SeatedPlayerResponse.builder()
+                            .userId(id)
+                            .displayName(u != null && u.getDisplayName() != null ? u.getDisplayName() : "Player")
+                            .avatarUrl(u != null ? u.getAvatarUrl() : null)
+                            .build();
+                })
                 .toList();
 
         return TableDetailResponse.builder()

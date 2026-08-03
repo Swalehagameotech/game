@@ -126,6 +126,7 @@ export function mergePlayers(prevPlayers = [], nextPlayers = [], user, options =
       cards,
       cardCount: incoming.cardCount ?? prev?.cardCount ?? (cards.length || 3),
       displayName: incoming.displayName || prev?.displayName || 'Player',
+      avatarUrl: incoming.avatarUrl || prev?.avatarUrl || null,
     };
   });
 }
@@ -378,10 +379,12 @@ export function normalizeGameState(data, user) {
         status: p.status || resolveSyntheticStatus(p.userId, data),
         cards: Array.isArray(p.cards) ? p.cards : [],
         cardCount: p.cardCount ?? (Array.isArray(p.cards) && p.cards.length ? p.cards.length : 3),
+        avatarUrl: p.avatarUrl || null,
       }))
     : seatedPlayers.map((p, index) => ({
         userId: p.userId,
         displayName: p.displayName || `Player ${index + 1}`,
+        avatarUrl: p.avatarUrl || null,
         status: resolveSyntheticStatus(p.userId, data),
         cards: [],
         cardCount: 3,

@@ -83,7 +83,7 @@ export default function DealAnimation({
               ease: [0.22, 1, 0.36, 1],
             }}
           >
-            <PlayingCard faceDown width={48} height={68} />
+            <PlayingCard faceDown width={50} height={70} />
           </motion.div>
         ))}
       </AnimatePresence>

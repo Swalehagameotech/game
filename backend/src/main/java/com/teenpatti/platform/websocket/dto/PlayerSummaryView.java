@@ -16,6 +16,7 @@ import java.util.List;
 public class PlayerSummaryView {
     private String userId;
     private String displayName;
+    private String avatarUrl;
     private PlayerStatus status;
     private long totalContributedPaise;
     /**

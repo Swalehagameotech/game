@@ -12,4 +12,5 @@ import lombok.NoArgsConstructor;
 public class SeatedPlayerResponse {
     private String userId;
     private String displayName;
+    private String avatarUrl;
 }

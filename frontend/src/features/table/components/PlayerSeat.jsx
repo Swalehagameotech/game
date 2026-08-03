@@ -2,6 +2,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Crown } from 'lucide-react';
 import PlayingCard from './PlayingCard';
+import avatarBoy from '@/assets/avatars/boy-ai.png';
+import avatarGirl from '@/assets/avatars/girl-ai.png';
 
 function MiniChip({ size = 11 }) {
   return (
@@ -12,57 +14,57 @@ function MiniChip({ size = 11 }) {
   );
 }
 
-/** Turn timer: full gold at start → fades to gray as seconds run out */
-function TurnTimer({ progress, active }) {
-  if (!active) return null;
-  const r = 38;
+/** Health-bar ring: full gold at start, shrinks as time runs out, color fades to gray. No gray track. */
+function TurnRing({ progress, active }) {
+  const r = 45;
   const c = 2 * Math.PI * r;
-  const p = Math.min(1, Math.max(0, progress));
-  const offset = c * (1 - p);
+  const p = Math.min(1, Math.max(0, Number(progress) || 0));
+  const color = `rgb(${Math.round(212 + (107 - 212) * (1 - p))}, ${Math.round(175 + (114 - 175) * (1 - p))}, ${Math.round(55 + (128 - 55) * (1 - p))})`;
 
-  // Gold → gray as time depletes (easy to see whose turn + how much left)
-  const rC = Math.round(212 + (148 - 212) * (1 - p)); // 212→148
-  const gC = Math.round(175 + (163 - 175) * (1 - p)); // 175→163
-  const bC = Math.round(55 + (184 - 55) * (1 - p));   // 55→184
-  const color = p > 0.08
-    ? `rgb(${rC}, ${gC}, ${bC})`
-    : '#94a3b8';
-  const glow = p > 0.35
-    ? `drop-shadow(0 0 8px rgba(212,175,55,${0.35 + p * 0.5}))`
-    : 'drop-shadow(0 0 3px rgba(148,163,184,0.45))';
+  if (!active) {
+    return (
+      <svg
+        className="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] pointer-events-none"
+        viewBox="0 0 100 100"
+        aria-hidden
+      >
+        <circle cx="50" cy="50" r={r} fill="none" stroke="#d4af37" strokeWidth="5" />
+      </svg>
+    );
+  }
 
   return (
     <svg
-      className="absolute inset-[-6px] w-[calc(100%+12px)] h-[calc(100%+12px)] pointer-events-none"
-      viewBox="0 0 88 88"
+      className="absolute inset-[-4px] w-[calc(100%+8px)] h-[calc(100%+8px)] pointer-events-none"
+      viewBox="0 0 100 100"
+      aria-hidden
     >
-      {/* Gray track — always visible so turn is obvious */}
-      <circle cx="44" cy="44" r={r} fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth="5" />
       <circle
-        cx="44"
-        cy="44"
+        cx="50"
+        cy="50"
         r={r}
         fill="none"
-        stroke={color}
-        strokeWidth="5"
+        strokeWidth="6"
         strokeLinecap="round"
         strokeDasharray={c}
-        strokeDashoffset={offset}
-        transform="rotate(-90 44 44)"
+        strokeDashoffset={c * (1 - p)}
+        transform="rotate(-90 50 50)"
         style={{
-          filter: glow,
-          transition: 'stroke-dashoffset 0.35s linear, stroke 0.35s ease',
+          stroke: color,
+          transition: 'stroke-dashoffset 0.25s linear, stroke 0.25s linear',
         }}
       />
     </svg>
   );
 }
 
-function initials(name) {
-  if (!name) return '?';
-  const parts = String(name).trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
+/** Stable boy/girl pick from userId. Prefer real avatarUrl when present. */
+function resolveAvatarSrc(player) {
+  if (player?.avatarUrl) return player.avatarUrl;
+  const key = String(player?.userId || player?.displayName || 'x');
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) hash = (hash + key.charCodeAt(i) * (i + 1)) % 2;
+  return hash === 0 ? avatarBoy : avatarGirl;
 }
 
 const STATUS = {
@@ -71,16 +73,11 @@ const STATUS = {
   PACKED: 'bg-[#8b1a28] text-white',
 };
 
-const CARD_W = 44;
-const CARD_H = 62;
-const CARD_GAP = 16;
-/** ~30% of card height tucked behind top of avatar */
-const CARD_BEHIND = Math.round(CARD_H * 0.3);
+const CARD_W = 50;
+const CARD_H = 70;
+const CARD_GAP = 14;
+const CARD_BEHIND = Math.round(CARD_H * 0.28);
 
-/**
- * Cards ABOVE avatar (bottom 30% tucked behind).
- * Opponent names under avatar. Current user name lives in top bar beside Rules.
- */
 export default function PlayerSeat({
   player,
   seatIndex = 0,
@@ -99,8 +96,8 @@ export default function PlayerSeat({
   showStatus = false,
 }) {
   const status = player?.status || 'BLIND';
-  const displayName = player?.displayName || 'Player';
-  const size = isMe ? 72 : 62;
+  const size = isMe ? 36 : 30;
+  const avatarSrc = resolveAvatarSrc(player);
 
   const badgeLabel = isTurn && turnSeconds >= 0
     ? String(Math.max(0, turnSeconds)).padStart(2, '0')
@@ -112,7 +109,7 @@ export default function PlayerSeat({
 
   const statusBadge = showStatus ? (
     <span
-      className={`mt-1 px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wide ${
+      className={`mt-1 px-2 py-0.5 rounded-full text-[8px] font-extrabold uppercase tracking-wide ${
         STATUS[status] || STATUS.BLIND
       }`}
     >
@@ -137,34 +134,12 @@ export default function PlayerSeat({
     <motion.div
       layout
       initial={{ opacity: 0, scale: 0.85 }}
-      animate={{
-        opacity: 1,
-        scale: isTurn ? [1, 1.06, 1] : 1,
-      }}
+      animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.7 }}
-      transition={
-        isTurn
-          ? { scale: { duration: 1.1, repeat: Infinity, ease: 'easeInOut' } }
-          : { type: 'spring', stiffness: 360, damping: 28 }
-      }
+      transition={{ type: 'spring', stiffness: 360, damping: 28 }}
       className="relative flex flex-col items-center select-none"
-      style={{ width: isMe ? Math.max(size + 90, 160) : 120 }}
+      style={{ width: isMe ? Math.max(CARD_W + CARD_GAP * 2 + 70, 140) : Math.max(CARD_W + CARD_GAP * 2, 100) }}
     >
-      {/* Whose turn callout */}
-      {isTurn && (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`absolute -top-5 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider whitespace-nowrap shadow-lg ${
-            isMe
-              ? 'bg-[#d4af37] text-black'
-              : 'bg-black/80 text-[#f5e6a8] shadow-[0_0_0_1px_rgba(212,175,55,0.55)]'
-          }`}
-        >
-          {isMe ? 'Your Turn' : 'Turn'}
-        </motion.div>
-      )}
-      {/* Cards ABOVE avatar — bottom 30% tucked behind avatar */}
       <div className="relative flex items-center">
         <div
           className="relative"
@@ -173,7 +148,6 @@ export default function PlayerSeat({
             height: size + (nCards > 0 ? CARD_H - CARD_BEHIND : 0),
           }}
         >
-          {/* Cards sit above; bottom 30% goes behind avatar */}
           {nCards > 0 && (
             <div
               className="absolute left-1/2 top-0 z-[1] pointer-events-none"
@@ -202,7 +176,6 @@ export default function PlayerSeat({
             </div>
           )}
 
-          {/* Avatar below cards, overlapping bottom 30% */}
           <div
             className="absolute left-0 z-10"
             style={{
@@ -211,41 +184,21 @@ export default function PlayerSeat({
               height: size,
             }}
           >
-            <TurnTimer progress={turnProgress} active={Boolean(isTurn)} />
-            {/* Pulsing outer glow when it's this player's turn */}
-            {isTurn && (
-              <motion.span
-                className="absolute inset-[-10px] rounded-full pointer-events-none"
-                style={{
-                  boxShadow: isMe
-                    ? '0 0 0 3px rgba(212,175,55,0.85), 0 0 28px rgba(245,215,110,0.9)'
-                    : '0 0 0 2px rgba(212,175,55,0.7), 0 0 20px rgba(245,215,110,0.65)',
-                }}
-                animate={{ opacity: [0.45, 1, 0.45], scale: [0.96, 1.04, 0.96] }}
-                transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
-              />
-            )}
+            <TurnRing progress={turnProgress} active={Boolean(isTurn)} />
             <div
-              className="w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#3a3a48] to-[#0c0c12]"
-              style={{
-                border: isTurn
-                  ? `3.5px solid ${turnProgress > 0.35 ? '#d4af37' : turnProgress > 0.08 ? '#a8b0bc' : '#94a3b8'}`
-                  : '3.5px solid #d4af37',
-                boxShadow: isTurn
-                  ? (turnProgress > 0.35
-                    ? '0 0 0 1px #f5e6a8, 0 0 28px rgba(245,215,110,0.95)'
-                    : '0 0 0 1px #94a3b8, 0 0 12px rgba(148,163,184,0.45)')
-                  : '0 0 0 1px rgba(245,230,168,0.35), 0 6px 16px rgba(0,0,0,0.5)',
-                transition: 'border-color 0.35s ease, box-shadow 0.35s ease',
-              }}
+              className="w-full h-full rounded-full overflow-hidden bg-[#1a1a22]"
+              style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}
             >
-              <span className="text-sm font-black text-[#f5e6a8]">
-                {initials(displayName)}
-              </span>
+              <img
+                src={avatarSrc}
+                alt=""
+                className="w-full h-full object-cover"
+                draggable={false}
+              />
             </div>
 
             <span
-              className={`absolute -bottom-0.5 -right-0.5 z-20 min-w-[22px] h-[22px] px-0.5 rounded-full bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[9px] font-black text-black flex items-center justify-center tabular-nums shadow ${
+              className={`absolute -bottom-0.5 -right-0.5 z-20 min-w-[16px] h-[16px] px-0.5 rounded-full bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[7px] font-black text-black flex items-center justify-center tabular-nums shadow ${
                 isTurn ? 'ring-2 ring-[#f5d76e]' : ''
               }`}
             >
@@ -254,25 +207,22 @@ export default function PlayerSeat({
           </div>
         </div>
 
-        {/* Balance box beside avatar for current player */}
         {isMe && balanceLabel && balanceLabel !== '₹—' && (
           <div
-            className="ml-2.5 px-3 py-2 rounded-md bg-black/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(212,175,55,0.5)] whitespace-nowrap"
+            className="ml-2 px-2.5 py-1.5 rounded-md bg-black/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(212,175,55,0.5)] whitespace-nowrap"
             style={{ marginTop: nCards > 0 ? CARD_H - CARD_BEHIND + size * 0.25 : size * 0.25 }}
           >
-            <p className="flex items-center justify-center gap-1 text-[11px] font-semibold text-white leading-none">
-              <MiniChip />
+            <p className="flex items-center justify-center gap-1 text-[10px] font-semibold text-white leading-none">
+              <MiniChip size={10} />
               {balanceLabel}
             </p>
           </div>
         )}
       </div>
 
-      {/* Opponent name removed — current user name sits top-right beside Rules */}
-
       {!isMe && balanceLabel && balanceLabel !== '₹—' && (
-        <p className="mt-1 flex items-center justify-center gap-1 text-[10px] font-semibold text-white drop-shadow">
-          <MiniChip />
+        <p className="mt-1 flex items-center justify-center gap-1 text-[9px] font-semibold text-white drop-shadow">
+          <MiniChip size={10} />
           {balanceLabel}
         </p>
       )}

@@ -58,10 +58,14 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                 }
                 Table table = tableRepository.findById(tableId)
                         .orElseThrow(() -> new IllegalArgumentException("Table not found: " + tableId));
-                List<String> seated = table.getSeatedPlayerIds();
-                if (seated == null || !seated.contains(userId)) {
-                    log.warn("STOMP SUBSCRIBE rejected: user [{}] not seated at table [{}]", userId, tableId);
-                    throw new IllegalArgumentException("Not authorized to subscribe to this table");
+                // Private tables: must be seated. Public: allow authenticated subscribe while joining
+                // (avoids STOMP ERROR / clientInboundChannel failures during seat race).
+                if (table.getTableType() == com.teenpatti.platform.table.TableType.PRIVATE) {
+                    List<String> seated = table.getSeatedPlayerIds();
+                    if (seated == null || !seated.contains(userId)) {
+                        log.warn("STOMP SUBSCRIBE rejected: user [{}] not seated at private table [{}]", userId, tableId);
+                        throw new IllegalArgumentException("Not authorized to subscribe to this table");
+                    }
                 }
             }
         }

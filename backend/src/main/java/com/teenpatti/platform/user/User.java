@@ -57,6 +57,10 @@ public class User {
     @Builder.Default
     private UserRole role = UserRole.PLAYER;
 
+    /** True for AI bot accounts — clients never receive this flag on public DTOs. */
+    @Builder.Default
+    private boolean bot = false;
+
     @Builder.Default
     private long walletBalance = 0L;
 

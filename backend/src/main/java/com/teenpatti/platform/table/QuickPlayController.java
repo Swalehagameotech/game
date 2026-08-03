@@ -1,9 +1,7 @@
 package com.teenpatti.platform.table;
 
 import com.teenpatti.platform.common.response.ApiResponse;
-import com.teenpatti.platform.lobby.LobbyService;
-import com.teenpatti.platform.lobby.dto.CreatePrivateTableRequest;
-import com.teenpatti.platform.lobby.dto.TableSummaryResponse;
+import com.teenpatti.platform.matchmaking.MatchmakingService;
 import com.teenpatti.platform.table.dto.JoinTableResponse;
 import com.teenpatti.platform.table.dto.QuickPlayRequest;
 import jakarta.validation.Valid;
@@ -16,10 +14,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 /**
- * Quick Play: join an open public table or auto-create one at the requested boot amount.
+ * Quick Play: smart matchmaking with optional AI bot fill.
  */
 @Slf4j
 @RestController
@@ -27,9 +23,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class QuickPlayController {
 
-    private final TableService tableService;
-    private final LobbyService lobbyService;
-    private final PublicTableService publicTableService;
+    private final MatchmakingService matchmakingService;
 
     @PostMapping("/quick-play")
     public ResponseEntity<ApiResponse<JoinTableResponse>> quickPlay(
@@ -42,38 +36,7 @@ public class QuickPlayController {
 
         log.info("Quick Play request for user [{}] boot {} paise variant {}", userId, targetBootPaise, selectedVariant);
 
-        List<Table> candidates = publicTableService.findQuickPlayCandidates(targetBootPaise, userId, selectedVariant);
-        if (!candidates.isEmpty()) {
-            Table targetTable = candidates.get(0);
-            log.info("Quick Play joining existing public table [{}] for user [{}]", targetTable.getId(), userId);
-            JoinTableResponse joinResponse = tableService.joinTable(userId, targetTable.getId());
-            return ResponseEntity.ok(ApiResponse.success("Quick Play successfully joined table", joinResponse));
-        }
-
-        log.info("Quick Play creating new public table for user [{}] boot {} paise", userId, targetBootPaise);
-
-        StakeTier tier = targetBootPaise <= 1000L ? StakeTier.LOW
-                : targetBootPaise <= 5000L ? StakeTier.MEDIUM
-                : StakeTier.HIGH;
-
-        CreatePrivateTableRequest createReq = CreatePrivateTableRequest.builder()
-                .tableName("Teen Patti Quick Play ₹" + (targetBootPaise / 100))
-                .stakeTier(tier)
-                .bootAmount(targetBootPaise)
-                .gameVariant(selectedVariant.name())
-                .minPlayers(3)
-                .maxPlayers(6)
-                .build();
-
-        TableSummaryResponse summary = lobbyService.createPublicTable(userId, createReq);
-
-        JoinTableResponse joinResponse = JoinTableResponse.builder()
-                .tableId(summary.getTableId())
-                .seatIndex(0)
-                .heldBuyInPaise(summary.getBootAmount())
-                .tableDetail(tableService.getTableDetails(userId, summary.getTableId()))
-                .build();
-
-        return ResponseEntity.ok(ApiResponse.success("Quick Play table auto-created", joinResponse));
+        JoinTableResponse joinResponse = matchmakingService.quickPlay(userId, targetBootPaise, selectedVariant);
+        return ResponseEntity.ok(ApiResponse.success("Matchmaking seat reserved", joinResponse));
     }
 }

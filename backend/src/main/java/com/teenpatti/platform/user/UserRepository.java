@@ -28,6 +28,8 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     long countByIsOnlineTrue();
 
+    java.util.List<User> findByBotTrue();
+
     Page<User> findByKycStatus(KycStatus kycStatus, Pageable pageable);
 
     @Query("{ '$or': [ { 'email': { '$regex': ?0, '$options': 'i' } }, { 'displayName': { '$regex': ?0, '$options': 'i' } }, { 'phoneNumber': { '$regex': ?0, '$options': 'i' } } ] }")

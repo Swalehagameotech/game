@@ -4,6 +4,7 @@ import { buildRotatedSeats, formatChipAmount } from './seatLayout';
 import PlayerSeat from './PlayerSeat';
 import TablePot from './TablePot';
 import DealAnimation from './DealAnimation';
+import ShowdownHands from './ShowdownHands';
 
 export const TABLE_BG_URL =
   'https://res.cloudinary.com/dsafvwkrf/image/upload/v1785347801/Untitled_1920_x_1080_px_1_1_qgc3s6.webp';
@@ -80,6 +81,18 @@ export default function TableArena({
   const winnerSeat = seats.find((s) => s.player?.userId === winnerUserId);
 
   const [localTurnSeconds, setLocalTurnSeconds] = useState(turnSecondsRemaining || 0);
+  const [turnTotal, setTurnTotal] = useState(
+    Math.max(Number(turnDurationSeconds) || 0, Number(turnSecondsRemaining) || 0, 1),
+  );
+
+  useEffect(() => {
+    // Lock total length when a turn starts so progress begins at 1 (full gold)
+    setTurnTotal(Math.max(
+      Number(turnDurationSeconds) || 0,
+      Number(turnSecondsRemaining) || 0,
+      1,
+    ));
+  }, [currentTurnUserId, turnDeadlineAt, turnDurationSeconds]);
 
   useEffect(() => {
     if (!handInProgress || !currentTurnUserId) {
@@ -107,9 +120,7 @@ export default function TableArena({
     return () => clearInterval(id);
   }, [turnDeadlineAt, handInProgress, currentTurnUserId, turnSecondsRemaining]);
 
-  const turnProgress = turnDurationSeconds > 0
-    ? Math.min(1, localTurnSeconds / turnDurationSeconds)
-    : 1;
+  const turnProgress = Math.min(1, Math.max(0, localTurnSeconds / turnTotal));
 
   const showPayoutFly = Boolean(handEnded && winnerUserId);
   /* Seat cards only after deal finishes (or mid-hand refresh when already dealt) */
@@ -121,7 +132,7 @@ export default function TableArena({
       <img
         src={TABLE_BG_URL}
         alt="Teen Patti table"
-        className="block w-auto h-auto max-w-full max-h-[min(50dvh,360px)] sm:max-h-[min(58dvh,520px)] md:max-h-[min(72dvh,720px)] lg:max-h-[min(82vh,820px)] object-contain select-none pointer-events-none"
+        className="block w-auto h-auto max-w-full max-h-[min(50dvh,340px)] sm:max-h-[min(58dvh,500px)] md:max-h-[min(64dvh,600px)] lg:max-h-[min(68vh,660px)] object-contain select-none pointer-events-none"
         draggable={false}
       />
 
@@ -133,6 +144,14 @@ export default function TableArena({
           fromSeatPosition={turnSeat?.position}
           winnerPosition={winnerSeat?.position}
           showPayoutFly={showPayoutFly}
+          hideLabel={Boolean(showdownRevealed && Object.keys(revealedHands || {}).length > 0)}
+        />
+
+        <ShowdownHands
+          show={Boolean(showdownRevealed && Object.keys(revealedHands || {}).length > 0)}
+          handsByUserId={revealedHands}
+          players={players}
+          winnerUserId={winnerUserId}
         />
 
         <DealAnimation active={dealActive} seats={seats} dealKey={dealKey} onComplete={onDealComplete} />
@@ -151,9 +170,9 @@ export default function TableArena({
               : (isMe ? (player.cards || []) : []);
 
             const hasFaceCards = visibleCards.length > 0;
-            /* Cards only after all required players are in AND deal animation finished */
-            const showBacks = showSeatCards && !hasFaceCards && (handInProgress || (player.cardCount > 0));
-            const seatCards = showSeatCards && hasFaceCards ? visibleCards : [];
+            /* After showdown, still show face cards even if deal flag is off */
+            const showBacks = showSeatCards && !hasFaceCards && (handInProgress || (player.cardCount > 0)) && !showdownRevealed;
+            const seatCards = (showSeatCards || showdownRevealed) && hasFaceCards ? visibleCards : [];
 
             let balanceLabel = '₹—';
             if (isMe && walletBalancePaise != null) {

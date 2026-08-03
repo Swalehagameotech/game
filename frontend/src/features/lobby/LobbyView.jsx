@@ -14,6 +14,7 @@ import { useGame } from '@/context/GameContext';
 import { getNotificationDisplayLabel } from '@/features/notifications/notificationUtils';
 import { isActiveHandStatus, getTableStatusLabel, normalizeGameState, isCountdownStatus, isJoinableStatus } from '@/features/table/tableUtils';
 import HomeCasinoScreen from './HomeCasinoScreen';
+import MatchmakingOverlay from './MatchmakingOverlay';
 import { VARIANT_CARDS } from './variants';
 
 function formatHistoryDate(isoString) {
@@ -172,7 +173,9 @@ export default function LobbyView({
       return;
     }
     setQuickPlayLoading(bootAmountPaise);
+    setShowQuickPlayModal(false);
     setError('');
+    const started = Date.now();
     try {
       const { data: res } = await axiosClient.post('/tables/quick-play', {
         bootAmountPaise,
@@ -186,6 +189,11 @@ export default function LobbyView({
         || joinData.id
         || joinData.tableDetail?.tableId
         || joinData.tableDetail?.id;
+      // Keep overlay visible briefly so matchmaking messages feel natural
+      const elapsed = Date.now() - started;
+      if (elapsed < 2200) {
+        await new Promise((r) => setTimeout(r, 2200 - elapsed));
+      }
       if (targetId) {
         onJoinTable(targetId);
       } else {
@@ -671,6 +679,12 @@ export default function LobbyView({
           </div>
         )}
       </AnimatePresence>
+
+      <MatchmakingOverlay
+        active={Boolean(quickPlayLoading)}
+        variantLabel={quickPlayModalVariant || selectedVariant}
+        bootLabel={quickPlayLoading ? `₹${(Number(quickPlayLoading) / 100).toFixed(0)} boot` : ''}
+      />
     </div>
   );
 }

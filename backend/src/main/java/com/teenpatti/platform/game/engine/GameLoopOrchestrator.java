@@ -1,5 +1,6 @@
 package com.teenpatti.platform.game.engine;
 
+import com.teenpatti.platform.bot.event.BotActionNeededEvent;
 import com.teenpatti.platform.game.GameSessionService;
 import com.teenpatti.platform.game.betting.BettingLogicService;
 import com.teenpatti.platform.game.round.RoundManagementService;
@@ -15,6 +16,7 @@ import com.teenpatti.platform.websocket.HandSettlementService;
 import com.teenpatti.platform.websocket.WebSocketEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -41,6 +43,7 @@ public class GameLoopOrchestrator {
     private final WebSocketEventPublisher eventPublisher;
     private final GameBroadcastService gameBroadcastService;
     private final com.teenpatti.platform.game.variant.VariantPhaseService variantPhaseService;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * No auto-start when players join — host must explicitly start the game.
@@ -186,6 +189,10 @@ public class GameLoopOrchestrator {
                 eventPublisher.publishSideShowRequested(tableId, userId, targetUserId);
                 eventPublisher.publishPlayerAction(tableId, userId, actionType, sideShowCost, engine.getPotPaise());
                 publishActionSideEffects(table, engine, userId, actionType);
+                // Must notify the challenged player (esp. bots) — same as SHOW path.
+                publishLiveBettingViews(table, engine);
+                applicationEventPublisher.publishEvent(
+                        new BotActionNeededEvent(tableId, targetUserId, true));
                 gameBroadcastService.broadcastTableState(tableId);
                 return null;
             } else if ("SIDE_SHOW_ACCEPT".equalsIgnoreCase(actionType)) {
@@ -377,6 +384,7 @@ public class GameLoopOrchestrator {
     private void startTurn(String tableId, String userId, int seatIndex) {
         turnManagementService.beginTurn(tableId, userId, seatIndex,
                 () -> processAutoPack(tableId, userId));
+        applicationEventPublisher.publishEvent(new BotActionNeededEvent(tableId, userId, false));
     }
 
     /**
@@ -389,10 +397,17 @@ public class GameLoopOrchestrator {
         bettingLogicService.publishBettingStateForTable(table, engine);
         List<String> seated = table.getSeatedPlayerIds() != null ? table.getSeatedPlayerIds() : List.of();
         for (String playerId : seated) {
+            var state = bettingLogicService.buildBettingState(table, engine, playerId);
             gameBroadcastService.deliverEventToPlayer(
                     playerId,
                     com.teenpatti.platform.websocket.RealTimeEventType.BETTING_STATE.name(),
-                    bettingLogicService.buildBettingState(table, engine, playerId));
+                    state);
+            // Notify bots that need to answer show / side-show / variant prompts
+            if (state.isMyTurn() || (state.getAllowedActions() != null && state.getAllowedActions().stream()
+                    .anyMatch(a -> a.contains("ACCEPT") || a.contains("REJECT")
+                            || a.equals("DISCARD_CARD") || a.startsWith("AUCTION")))) {
+                applicationEventPublisher.publishEvent(new BotActionNeededEvent(table.getId(), playerId, true));
+            }
         }
     }
 
