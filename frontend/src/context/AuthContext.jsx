@@ -43,15 +43,11 @@ export const AuthProvider = ({ children }) => {
       const autoGuestLogin = async () => {
         try {
           const rand = Math.floor(100000 + Math.random() * 900000);
-          const demoEmail = `player_${rand}@example.com`;
-          const demoPhone = `+919${Math.floor(100000000 + Math.random() * 899999999)}`;
           const demoPass = 'Password123';
           const demoDisplay = `Player_${rand.toString().slice(-4)}`;
 
           try {
             await axiosClient.post('/auth/register', {
-              email: demoEmail,
-              phoneNumber: demoPhone,
               password: demoPass,
               displayName: demoDisplay,
             });
@@ -60,7 +56,7 @@ export const AuthProvider = ({ children }) => {
           }
 
           const { data: res } = await axiosClient.post('/auth/login', {
-            loginId: demoEmail,
+            loginId: demoDisplay,
             password: demoPass,
           });
 
@@ -72,7 +68,6 @@ export const AuthProvider = ({ children }) => {
           login(
             {
               id: userObj.id || authData.userId,
-              email: userObj.email,
               displayName: userObj.displayName || authData.displayName,
               role: userObj.role || authData.role || 'PLAYER',
               balancePaise: wallet?.balancePaise,

@@ -69,6 +69,24 @@ public class MongoConfig {
                         log.info("Created collection for entity: {}", entityClass.getSimpleName());
                     }
                     var indexOps = mongoTemplate.indexOps(entityClass);
+                    if (entityClass == User.class) {
+                        try {
+                            indexOps.getIndexInfo().forEach(idx -> {
+                                String name = idx.getName();
+                                if ("email".equals(name) || "phoneNumber".equals(name)
+                                        || (name != null && (name.startsWith("email") || name.startsWith("phoneNumber")))) {
+                                    log.info("Dropping legacy unique index '{}' on users (username-only auth)", name);
+                                    try {
+                                        indexOps.dropIndex(name);
+                                    } catch (Exception dropEx) {
+                                        log.warn("Could not drop index {}: {}", name, dropEx.getMessage());
+                                    }
+                                }
+                            });
+                        } catch (Exception ex) {
+                            log.warn("User index cleanup note: {}", ex.getMessage());
+                        }
+                    }
                     if (entityClass == LedgerEntry.class) {
                         try {
                             indexOps.getIndexInfo().stream()

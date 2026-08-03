@@ -22,7 +22,13 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     boolean existsByPhoneNumber(String phoneNumber);
 
+    Optional<User> findByDisplayName(String displayName);
+
+    Optional<User> findByDisplayNameIgnoreCase(String displayName);
+
     boolean existsByDisplayName(String displayName);
+
+    boolean existsByDisplayNameIgnoreCase(String displayName);
 
     boolean existsByDisplayNameAndIdNot(String displayName, String id);
 

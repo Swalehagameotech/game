@@ -48,20 +48,17 @@ public class AuthService {
      */
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail()) || userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
-            // Generic duplicate error message to prevent account enumeration
-            throw new DuplicateUserException("An account with the provided email or phone number already exists.");
+        String username = request.getDisplayName() == null ? "" : request.getDisplayName().trim();
+        if (username.isBlank()) {
+            throw new DuplicateUserException("Username is required.");
         }
-
-        if (request.getDisplayName() != null && !request.getDisplayName().isBlank() && userRepository.existsByDisplayName(request.getDisplayName().trim())) {
-            throw new DuplicateUserException("Display name '" + request.getDisplayName() + "' is already taken. Please choose a different display name.");
+        if (userRepository.existsByDisplayNameIgnoreCase(username) || userRepository.existsByDisplayName(username)) {
+            throw new DuplicateUserException("Username '" + username + "' is already taken. Please choose another.");
         }
 
         User user = User.builder()
-                .email(request.getEmail())
-                .phoneNumber(request.getPhoneNumber())
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .displayName(request.getDisplayName().trim())
+                .displayName(username)
                 .kycStatus(KycStatus.NOT_STARTED)
                 .accountStatus(AccountStatus.ACTIVE)
                 .role(request.getRole() != null ? request.getRole() : UserRole.PLAYER)
@@ -77,24 +74,25 @@ public class AuthService {
                 .build();
         walletRepository.save(wallet);
 
-        log.info("Registered new user [{}] with atomic wallet initialization", savedUser.getId());
+        log.info("Registered new user [{}] with username [{}]", savedUser.getId(), username);
         return createAuthSession(savedUser);
     }
 
     public AuthResponse login(LoginRequest request) {
-        Optional<User> userOpt = userRepository.findByEmail(request.getLoginId());
+        String username = request.getLoginId() == null ? "" : request.getLoginId().trim();
+        Optional<User> userOpt = userRepository.findByDisplayNameIgnoreCase(username);
         if (userOpt.isEmpty()) {
-            userOpt = userRepository.findByPhoneNumber(request.getLoginId());
+            userOpt = userRepository.findByDisplayName(username);
         }
 
         if (userOpt.isEmpty()) {
-            throw new BadCredentialsException("Invalid email/phone or password.");
+            throw new BadCredentialsException("Invalid username or password.");
         }
 
         User user = userOpt.get();
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new BadCredentialsException("Invalid email/phone or password.");
+            throw new BadCredentialsException("Invalid username or password.");
         }
 
         if (user.getAccountStatus() == AccountStatus.SUSPENDED) {
@@ -112,19 +110,15 @@ public class AuthService {
     @Transactional
     public AuthResponse guestLogin() {
         long randomId = (long) (Math.floor(100000 + Math.random() * 900000));
-        String guestEmail = "guest_" + System.currentTimeMillis() + "_" + randomId + "@teenpatti.internal";
-        String guestPhone = "+919" + String.format("%09d", (long)(Math.random() * 1000000000L));
         String guestPass = "GuestPass_" + randomId;
-        String guestDisplay = "Guest Player " + (randomId % 10000);
+        String guestDisplay = "Guest" + (randomId % 10000);
 
-        while (userRepository.existsByDisplayName(guestDisplay)) {
+        while (userRepository.existsByDisplayName(guestDisplay) || userRepository.existsByDisplayNameIgnoreCase(guestDisplay)) {
             randomId = (long) (Math.floor(100000 + Math.random() * 900000));
-            guestDisplay = "Guest Player " + (randomId % 10000);
+            guestDisplay = "Guest" + (randomId % 10000);
         }
 
         User user = User.builder()
-                .email(guestEmail)
-                .phoneNumber(guestPhone)
                 .passwordHash(passwordEncoder.encode(guestPass))
                 .displayName(guestDisplay)
                 .kycStatus(KycStatus.NOT_STARTED)

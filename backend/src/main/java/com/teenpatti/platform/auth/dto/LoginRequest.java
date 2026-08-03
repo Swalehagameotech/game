@@ -7,7 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Login request payload DTO.
+ * Login — unique username + password.
  */
 @Data
 @Builder
@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class LoginRequest {
 
-    @NotBlank(message = "Email or phone number is required")
+    @NotBlank(message = "Username is required")
     private String loginId;
 
     @NotBlank(message = "Password is required")

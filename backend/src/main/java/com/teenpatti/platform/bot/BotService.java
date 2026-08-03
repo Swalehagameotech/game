@@ -32,8 +32,6 @@ import java.util.concurrent.*;
 @RequiredArgsConstructor
 public class BotService {
 
-    private static final String BOT_EMAIL_PREFIX = "bot+";
-    private static final String BOT_EMAIL_DOMAIN = "@teenpatti.internal";
     private static final long BOT_WALLET_SEED_PAISE = 5_000_000L; // ₹50,000 play chips
 
     private final UserRepository userRepository;
@@ -285,15 +283,9 @@ public class BotService {
             name = name + " " + ThreadLocalRandom.current().nextInt(100, 999);
         }
 
-        String idSuffix = UUID.randomUUID().toString().substring(0, 8);
-        String email = BOT_EMAIL_PREFIX + idSuffix + BOT_EMAIL_DOMAIN;
-        String phone = "+91bot" + idSuffix + ThreadLocalRandom.current().nextInt(100, 999);
-
         String avatar = randomAiAvatar();
 
         User bot = User.builder()
-                .email(email)
-                .phoneNumber(phone)
                 .displayName(name)
                 .avatarUrl(avatar)
                 .passwordHash("{noop}bot-disabled")

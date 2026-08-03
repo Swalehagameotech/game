@@ -33,12 +33,10 @@ public class User {
     @Id
     private String id;
 
-    @Indexed(unique = true)
     private String email;
 
     private String passwordHash;
 
-    @Indexed(unique = true)
     private String phoneNumber;
 
     @Indexed(unique = true)

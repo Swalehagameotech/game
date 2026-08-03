@@ -49,9 +49,6 @@ class AuthControllerTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    @Autowired
-    private JwtTokenProvider jwtTokenProvider;
-
     @BeforeEach
     void setUp() {
         refreshTokenRepository.deleteAll();
@@ -60,11 +57,9 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("Register with valid request creates User and zero-balance Wallet atomically")
+    @DisplayName("Register with unique username creates User and Wallet")
     void register_Success() throws Exception {
         RegisterRequest request = RegisterRequest.builder()
-                .email("player1@example.com")
-                .phoneNumber("9876543210")
                 .password("Password123")
                 .displayName("PlayerOne")
                 .build();
@@ -76,39 +71,31 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.accessToken").exists())
                 .andExpect(jsonPath("$.data.refreshToken").exists())
-                .andExpect(jsonPath("$.data.user.email").value("player1@example.com"))
-                .andExpect(jsonPath("$.data.user.phoneNumber").value("9876543210"))
                 .andExpect(jsonPath("$.data.user.displayName").value("PlayerOne"))
                 .andExpect(jsonPath("$.data.user.passwordHash").doesNotExist());
 
-        // Verify User saved in Mongo
-        Optional<User> savedUserOpt = userRepository.findByEmail("player1@example.com");
+        Optional<User> savedUserOpt = userRepository.findByDisplayName("PlayerOne");
         assertTrue(savedUserOpt.isPresent());
         User savedUser = savedUserOpt.get();
         assertTrue(passwordEncoder.matches("Password123", savedUser.getPasswordHash()));
 
-        // Verify Wallet created atomically with welcome bonus balancePaise = 100000 (₹1,000)
         Optional<Wallet> walletOpt = walletRepository.findByUserId(savedUser.getId());
         assertTrue(walletOpt.isPresent());
-        assertEquals(100_000L, walletOpt.get().getBalancePaise());
+        assertEquals(0L, walletOpt.get().getBalancePaise());
     }
 
     @Test
-    @DisplayName("Register with duplicate email fails with 409 Conflict")
-    void register_DuplicateEmail_Fails() throws Exception {
+    @DisplayName("Register with duplicate username fails with 409 Conflict")
+    void register_DuplicateUsername_Fails() throws Exception {
         userRepository.save(User.builder()
-                .email("duplicate@example.com")
-                .phoneNumber("9111111111")
                 .passwordHash(passwordEncoder.encode("Password123"))
                 .displayName("ExistingUser")
                 .accountStatus(AccountStatus.ACTIVE)
                 .build());
 
         RegisterRequest request = RegisterRequest.builder()
-                .email("duplicate@example.com")
-                .phoneNumber("9222222222")
                 .password("Password123")
-                .displayName("NewUser")
+                .displayName("ExistingUser")
                 .build();
 
         mockMvc.perform(post("/api/auth/register")
@@ -120,38 +107,10 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("Register with duplicate phone fails with 409 Conflict")
-    void register_DuplicatePhone_Fails() throws Exception {
-        userRepository.save(User.builder()
-                .email("original@example.com")
-                .phoneNumber("9876543210")
-                .passwordHash(passwordEncoder.encode("Password123"))
-                .displayName("Original")
-                .accountStatus(AccountStatus.ACTIVE)
-                .build());
-
-        RegisterRequest request = RegisterRequest.builder()
-                .email("other@example.com")
-                .phoneNumber("9876543210")
-                .password("Password123")
-                .displayName("Other")
-                .build();
-
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.errorCode").value("DUPLICATE_USER"));
-    }
-
-    @Test
-    @DisplayName("Register with weak password fails validation with 400 Bad Request")
+    @DisplayName("Register with short password fails validation with 400 Bad Request")
     void register_WeakPassword_FailsValidation() throws Exception {
         RegisterRequest request = RegisterRequest.builder()
-                .email("valid@example.com")
-                .phoneNumber("9876543210")
-                .password("weak")
+                .password("abc")
                 .displayName("ValidUser")
                 .build();
 
@@ -164,18 +123,16 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("Login with valid credentials returns tokens and user profile")
+    @DisplayName("Login with valid username returns tokens and user profile")
     void login_Success() throws Exception {
         User user = userRepository.save(User.builder()
-                .email("login@example.com")
-                .phoneNumber("9876543210")
                 .passwordHash(passwordEncoder.encode("Password123"))
                 .displayName("LoginUser")
                 .accountStatus(AccountStatus.ACTIVE)
                 .build());
 
         LoginRequest loginRequest = LoginRequest.builder()
-                .loginId("login@example.com")
+                .loginId("LoginUser")
                 .password("Password123")
                 .build();
 
@@ -193,15 +150,13 @@ class AuthControllerTest {
     @DisplayName("Login with wrong password fails with 401 Unauthorized")
     void login_WrongPassword_Fails() throws Exception {
         userRepository.save(User.builder()
-                .email("login@example.com")
-                .phoneNumber("9876543210")
                 .passwordHash(passwordEncoder.encode("Password123"))
                 .displayName("LoginUser")
                 .accountStatus(AccountStatus.ACTIVE)
                 .build());
 
         LoginRequest loginRequest = LoginRequest.builder()
-                .loginId("login@example.com")
+                .loginId("LoginUser")
                 .password("WrongPassword1")
                 .build();
 
@@ -210,14 +165,14 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(loginRequest)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_CREDENTIALS"))
-                .andExpect(jsonPath("$.message").value("Invalid email/phone or password."));
+                .andExpect(jsonPath("$.message").value("Invalid username or password."));
     }
 
     @Test
-    @DisplayName("Login with non-existent email fails with indistinguishable 401 Unauthorized")
+    @DisplayName("Login with non-existent username fails with 401 Unauthorized")
     void login_NonExistentUser_Fails() throws Exception {
         LoginRequest loginRequest = LoginRequest.builder()
-                .loginId("nonexistent@example.com")
+                .loginId("nobody")
                 .password("Password123")
                 .build();
 
@@ -226,22 +181,20 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(loginRequest)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_CREDENTIALS"))
-                .andExpect(jsonPath("$.message").value("Invalid email/phone or password."));
+                .andExpect(jsonPath("$.message").value("Invalid username or password."));
     }
 
     @Test
     @DisplayName("Login for SUSPENDED account fails with 403 Forbidden")
     void login_SuspendedAccount_Fails() throws Exception {
         userRepository.save(User.builder()
-                .email("suspended@example.com")
-                .phoneNumber("9876543210")
                 .passwordHash(passwordEncoder.encode("Password123"))
                 .displayName("SuspendedUser")
                 .accountStatus(AccountStatus.SUSPENDED)
                 .build());
 
         LoginRequest loginRequest = LoginRequest.builder()
-                .loginId("suspended@example.com")
+                .loginId("SuspendedUser")
                 .password("Password123")
                 .build();
 
@@ -256,8 +209,6 @@ class AuthControllerTest {
     @DisplayName("Refresh token rotation issues new access & refresh tokens and revokes old refresh token")
     void refresh_Rotation_Success() throws Exception {
         RegisterRequest registerRequest = RegisterRequest.builder()
-                .email("refresh@example.com")
-                .phoneNumber("9876543210")
                 .password("Password123")
                 .displayName("RefreshUser")
                 .build();
@@ -288,7 +239,6 @@ class AuthControllerTest {
 
         assertNotEquals(initialRefreshToken, newRefreshToken);
 
-        // Attempting to reuse old initial refresh token must fail with 401
         mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(refreshRequest)))
@@ -300,8 +250,6 @@ class AuthControllerTest {
     @DisplayName("Logout revokes refresh token and blocks subsequent refresh attempts")
     void logout_RevokesToken() throws Exception {
         RegisterRequest registerRequest = RegisterRequest.builder()
-                .email("logout@example.com")
-                .phoneNumber("9876543210")
                 .password("Password123")
                 .displayName("LogoutUser")
                 .build();
@@ -325,7 +273,6 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        // Submitting revoked token to /refresh must fail
         RefreshRequest refreshRequest = RefreshRequest.builder()
                 .refreshToken(refreshToken)
                 .build();
