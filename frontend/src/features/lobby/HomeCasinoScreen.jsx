@@ -80,7 +80,7 @@ export default function HomeCasinoScreen({
   const variantLabel = (selectedVariant || 'CLASSIC').replaceAll('_', ' ');
 
   return (
-    <div className="relative min-h-full pb-28 text-white">
+    <div className="relative min-h-full pb-[calc(5.5rem+env(safe-area-inset-bottom))] text-white">
       {/* Atmosphere */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-[#2a0c0c] via-[#1a0808] to-[#0f0404]" />
@@ -94,7 +94,16 @@ export default function HomeCasinoScreen({
         />
       </div>
 
-      <div className="relative z-10 max-w-[1440px] mx-auto px-3 sm:px-5 pt-2 sm:pt-3 space-y-3 sm:space-y-4">
+      <div className="relative z-10 max-w-[1440px] mx-auto px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] sm:pt-3 space-y-3 sm:space-y-4">
+        {/* Phone brand hero — vertical home */}
+        <div className="sm:hidden text-center pt-1 pb-1">
+          <BrandLogoAces className="mb-1 scale-90" />
+          <h1 className="font-display text-2xl font-extrabold tracking-[0.16em] text-transparent bg-clip-text bg-gradient-to-b from-[#fff8d6] via-[#d4af37] to-[#8a6a12]">
+            TEEN PATTI
+          </h1>
+          <p className="text-[9px] tracking-[0.28em] text-[#c9a227] uppercase mt-0.5">Real Fun · Real People</p>
+        </div>
+
         {/* ── Header ── */}
         <header className="flex items-center justify-between gap-2 sm:gap-4">
           {/* Profile + wallet */}
@@ -133,7 +142,7 @@ export default function HomeCasinoScreen({
             </button>
           </div>
 
-          {/* Brand */}
+          {/* Brand (desktop) */}
           <div className="absolute left-1/2 -translate-x-1/2 text-center pointer-events-none hidden sm:block">
             <BrandLogoAces className="mb-1" />
             <h1 className="font-display text-xl md:text-3xl font-extrabold tracking-[0.18em] text-transparent bg-clip-text bg-gradient-to-b from-[#fff8d6] via-[#d4af37] to-[#8a6a12] drop-shadow-[0_2px_12px_rgba(212,175,55,0.35)]">
@@ -144,9 +153,6 @@ export default function HomeCasinoScreen({
               Real Fun · Real People
               <span className="h-px w-8 bg-[#d4af37]/45" />
             </p>
-          </div>
-          <div className="sm:hidden text-center pointer-events-none">
-            <h1 className="font-display text-base font-extrabold tracking-[0.15em] text-[#d4af37]">TEEN PATTI</h1>
           </div>
 
           {/* Utilities */}
@@ -231,9 +237,57 @@ export default function HomeCasinoScreen({
           </div>
         )}
 
+        {/* ── Action row first on phone (vertical flow) ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3 order-none">
+          <button
+            type="button"
+            onClick={() => onQuickPlay(selectedVariant || 'CLASSIC')}
+            disabled={Boolean(quickPlayLoading)}
+            className="col-span-2 sm:col-span-1 relative flex flex-col items-center justify-center gap-1 py-4 sm:py-3 px-3 rounded-2xl border-2 border-[#f5e6a8]/70 bg-gradient-to-b from-[#fff4c2] via-[#d4af37] to-[#8a6a12] text-[#1a0505] shadow-[0_0_28px_rgba(212,175,55,0.45)] cursor-pointer hover:brightness-105 disabled:opacity-60 sm:order-3"
+          >
+            <span className="font-display text-base sm:text-base font-extrabold tracking-wide uppercase">Play Now</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">
+              {quickPlayLoading ? 'Finding…' : `Quick Play · ${variantLabel}`}
+            </span>
+            <span className="absolute -top-1 right-3 text-[#1a0505]/50 text-xs">♠ ♦</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCreatePrivate}
+            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-[#d4af37]/35 bg-gradient-to-b from-[#5a3a08] to-[#2a1804] text-[#f5e6a8] cursor-pointer hover:brightness-110 sm:order-1"
+          >
+            <Users className="w-5 h-5" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wide">Create Table</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenJoinCode}
+            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-sky-400/40 bg-gradient-to-b from-[#0c3a5a] to-[#061828] text-sky-100 cursor-pointer hover:brightness-110 sm:order-2"
+          >
+            <UserPlus className="w-5 h-5" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wide">Join By Code</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCreatePrivate}
+            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-violet-400/40 bg-gradient-to-b from-[#3a1a4a] to-[#1a0a22] text-violet-100 cursor-pointer hover:brightness-110 sm:order-4"
+          >
+            <Lock className="w-5 h-5" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wide">Private Table</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCreatePublic}
+            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-emerald-400/40 bg-gradient-to-b from-[#0d3d28] to-[#061c12] text-emerald-100 cursor-pointer hover:brightness-110 sm:order-5"
+          >
+            <PlusCircle className="w-5 h-5" />
+            <span className="text-[10px] font-extrabold uppercase tracking-wide">Create Public</span>
+          </button>
+        </div>
+
         {/* ── Main: variations + live tables ── */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 items-start">
-          <section className="lg:col-span-9 order-2 lg:order-1">
+          <section className="lg:col-span-9 order-1">
             <div className="flex items-center justify-center gap-3 mb-3">
               <span className="h-px flex-1 max-w-[80px] bg-gradient-to-r from-transparent to-[#d4af37]/60" />
               <h2 className="font-display text-sm sm:text-base font-bold tracking-[0.2em] text-[#f5e6a8] uppercase">
@@ -279,7 +333,7 @@ export default function HomeCasinoScreen({
           </section>
 
           {/* Live tables */}
-          <aside className="lg:col-span-3 order-1 lg:order-2 rounded-2xl border border-[#d4af37]/30 bg-black/45 backdrop-blur-md p-3 sm:p-4 min-h-[200px] lg:min-h-[420px] flex flex-col">
+          <aside className="lg:col-span-3 order-2 rounded-2xl border border-[#d4af37]/30 bg-black/45 backdrop-blur-md p-3 sm:p-4 min-h-[160px] lg:min-h-[420px] flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-display text-sm font-bold tracking-[0.14em] text-[#f5e6a8]">LIVE TABLES</h3>
               <button type="button" onClick={onRefresh} className="text-[10px] text-[#d4af37] font-bold flex items-center gap-1 cursor-pointer uppercase">
@@ -288,9 +342,9 @@ export default function HomeCasinoScreen({
               </button>
             </div>
 
-            <div className="flex-1 space-y-2 overflow-y-auto max-h-[320px] lg:max-h-none pr-0.5">
+            <div className="flex-1 space-y-2 overflow-y-auto max-h-[220px] sm:max-h-[320px] lg:max-h-none pr-0.5">
               {liveTables.length === 0 ? (
-                <p className="text-center text-xs text-white/45 py-10">No live tables yet. Create one!</p>
+                <p className="text-center text-xs text-white/45 py-8">No live tables yet. Create one!</p>
               ) : (
                 liveTables.map((table, idx) => {
                   const id = table.tableId || table.id;
@@ -344,54 +398,6 @@ export default function HomeCasinoScreen({
               ))}
             </div>
           </aside>
-        </div>
-
-        {/* ── Action row ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={onOpenCreatePrivate}
-            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-[#d4af37]/35 bg-gradient-to-b from-[#5a3a08] to-[#2a1804] text-[#f5e6a8] cursor-pointer hover:brightness-110"
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] font-extrabold uppercase tracking-wide">Create Table</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenJoinCode}
-            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-sky-400/40 bg-gradient-to-b from-[#0c3a5a] to-[#061828] text-sky-100 cursor-pointer hover:brightness-110"
-          >
-            <UserPlus className="w-5 h-5" />
-            <span className="text-[10px] font-extrabold uppercase tracking-wide">Join By Code</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onQuickPlay(selectedVariant || 'CLASSIC')}
-            disabled={Boolean(quickPlayLoading)}
-            className="col-span-2 sm:col-span-1 relative flex flex-col items-center justify-center gap-1 py-3.5 sm:py-3 px-3 rounded-2xl border-2 border-[#f5e6a8]/70 bg-gradient-to-b from-[#fff4c2] via-[#d4af37] to-[#8a6a12] text-[#1a0505] shadow-[0_0_28px_rgba(212,175,55,0.45)] cursor-pointer hover:brightness-105 disabled:opacity-60 order-first sm:order-none"
-          >
-            <span className="font-display text-sm sm:text-base font-extrabold tracking-wide uppercase">Play Now</span>
-            <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">
-              {quickPlayLoading ? 'Finding…' : `Quick Play · ${variantLabel}`}
-            </span>
-            <span className="absolute -top-1 right-3 text-[#1a0505]/50 text-xs">♠ ♦</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenCreatePrivate}
-            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-violet-400/40 bg-gradient-to-b from-[#3a1a4a] to-[#1a0a22] text-violet-100 cursor-pointer hover:brightness-110"
-          >
-            <Lock className="w-5 h-5" />
-            <span className="text-[10px] font-extrabold uppercase tracking-wide">Private Table</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenCreatePublic}
-            className="flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 py-3 px-2 rounded-2xl border border-emerald-400/40 bg-gradient-to-b from-[#0d3d28] to-[#061c12] text-emerald-100 cursor-pointer hover:brightness-110"
-          >
-            <PlusCircle className="w-5 h-5" />
-            <span className="text-[10px] font-extrabold uppercase tracking-wide">Create Public</span>
-          </button>
         </div>
       </div>
 

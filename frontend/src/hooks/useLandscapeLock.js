@@ -1,11 +1,20 @@
 import { useEffect } from 'react';
 
 /**
- * Best-effort landscape lock (Android / installed PWA).
- * iOS Safari usually ignores this — CSS portrait-rotate covers that case.
+ * Best-effort landscape lock while in a game room (Android / installed PWA).
+ * Lobby stays free so phones can use vertical home.
  */
-export default function useLandscapeLock() {
+export default function useLandscapeLock(enabled = false) {
   useEffect(() => {
+    if (!enabled) {
+      try {
+        screen?.orientation?.unlock?.();
+      } catch {
+        // ignore
+      }
+      return undefined;
+    }
+
     const lock = async () => {
       try {
         const orientation = screen?.orientation;
@@ -35,5 +44,5 @@ export default function useLandscapeLock() {
         // ignore
       }
     };
-  }, []);
+  }, [enabled]);
 }

@@ -82,91 +82,95 @@ export default function ProfileModal({ isOpen, onClose }) {
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+      <div className="tp-modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
         <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.96 }}
-          className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden"
+          initial={{ opacity: 0, y: 24, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 16, scale: 0.98 }}
+          className="tp-modal-panel w-full sm:max-w-lg max-h-[92dvh] overflow-hidden rounded-t-3xl sm:rounded-2xl"
         >
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+          <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-[#d4af37]/25">
             <div className="flex items-center gap-2">
-              <User className="w-5 h-5 text-amber-400" />
-              <h2 className="text-lg font-black text-slate-100">My Profile</h2>
+              <User className="w-5 h-5 text-[#d4af37]" />
+              <h2 className="font-display text-lg font-extrabold tracking-wide text-[#f5e6a8]">My Profile</h2>
             </div>
-            <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-200 cursor-pointer">
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-full text-[#f5e6a8]/70 hover:text-[#f5e6a8] hover:bg-black/30 cursor-pointer"
+            >
               <X className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          <div className="p-5 sm:p-6 space-y-5 max-h-[min(75dvh,640px)] overflow-y-auto pb-[max(1.25rem,env(safe-area-inset-bottom))]">
             {loading ? (
               <div className="flex justify-center py-12">
-                <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                <Loader2 className="w-8 h-8 text-[#d4af37] animate-spin" />
               </div>
             ) : (
               <>
                 {error && (
-                  <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-2">
+                  <div className="text-sm text-[#ffb4b4] bg-[#8b1a28]/25 border border-[#d4af37]/25 rounded-xl px-4 py-2">
                     {error}
                   </div>
                 )}
                 {success && (
-                  <div className="text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-2">
+                  <div className="text-sm text-emerald-200 bg-emerald-950/40 border border-emerald-500/30 rounded-xl px-4 py-2">
                     {success}
                   </div>
                 )}
 
                 {profile && (
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="bg-slate-950 rounded-xl p-3 border border-slate-800">
-                      <span className="text-[10px] uppercase text-slate-500 font-bold block">Wallet</span>
-                      <span className="font-mono font-bold text-amber-400">{profile.formattedWalletBalance}</span>
+                    <div className="rounded-xl p-3 border border-[#d4af37]/25 bg-black/35">
+                      <span className="text-[10px] uppercase text-[#d4af37]/70 font-bold block">Wallet</span>
+                      <span className="font-mono font-bold text-[#f5e6a8]">{profile.formattedWalletBalance}</span>
                     </div>
-                    <div className="bg-slate-950 rounded-xl p-3 border border-slate-800">
-                      <span className="text-[10px] uppercase text-slate-500 font-bold block">Games Played</span>
-                      <span className="font-mono font-bold text-slate-100">{profile.matchesPlayedCount ?? 0}</span>
+                    <div className="rounded-xl p-3 border border-[#d4af37]/25 bg-black/35">
+                      <span className="text-[10px] uppercase text-[#d4af37]/70 font-bold block">Games Played</span>
+                      <span className="font-mono font-bold text-[#f5e6a8]">{profile.matchesPlayedCount ?? 0}</span>
                     </div>
-                    <div className="bg-slate-950 rounded-xl p-3 border border-slate-800 col-span-2">
-                      <span className="text-[10px] uppercase text-slate-500 font-bold block">Email</span>
-                      <span className="text-slate-300 truncate block">{profile.email}</span>
+                    <div className="rounded-xl p-3 border border-[#d4af37]/25 bg-black/35 col-span-2">
+                      <span className="text-[10px] uppercase text-[#d4af37]/70 font-bold block">Username</span>
+                      <span className="text-[#f5e6a8] truncate block font-semibold">{profile.displayName}</span>
                     </div>
                   </div>
                 )}
 
-                <form onSubmit={handleSaveProfile} className="space-y-4">
+                <form onSubmit={handleSaveProfile} className="space-y-3.5">
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase">Display Name</label>
+                    <label className="text-[11px] font-bold text-[#d4af37] uppercase tracking-wider">Display Name</label>
                     <input
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       minLength={3}
                       maxLength={20}
-                      className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-amber-500 outline-none"
+                      className="tp-input mt-1.5 px-4 py-3 text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase">Avatar URL</label>
+                    <label className="text-[11px] font-bold text-[#d4af37] uppercase tracking-wider">Avatar URL</label>
                     <input
                       value={avatarUrl}
                       onChange={(e) => setAvatarUrl(e.target.value)}
                       placeholder="https://..."
-                      className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-amber-500 outline-none"
+                      className="tp-input mt-1.5 px-4 py-3 text-sm"
                     />
                   </div>
                   <button
                     type="submit"
                     disabled={saving}
-                    className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                    className="tp-btn-gold w-full py-3 text-sm flex items-center justify-center gap-2 cursor-pointer"
                   >
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     Save Profile
                   </button>
                 </form>
 
-                <form onSubmit={handleChangePassword} className="space-y-4 pt-4 border-t border-slate-800">
-                  <div className="flex items-center gap-2 text-slate-300 font-bold text-sm">
-                    <Lock className="w-4 h-4 text-amber-400" />
+                <form onSubmit={handleChangePassword} className="space-y-3.5 pt-4 border-t border-[#d4af37]/20">
+                  <div className="flex items-center gap-2 text-[#f5e6a8] font-bold text-sm">
+                    <Lock className="w-4 h-4 text-[#d4af37]" />
                     Change Password
                   </div>
                   <input
@@ -174,19 +178,19 @@ export default function ProfileModal({ isOpen, onClose }) {
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="Current password"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-amber-500 outline-none"
+                    className="tp-input px-4 py-3 text-sm"
                   />
                   <input
                     type="password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="New password (8+ chars, letter + number)"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-amber-500 outline-none"
+                    placeholder="New password (4+ characters)"
+                    className="tp-input px-4 py-3 text-sm"
                   />
                   <button
                     type="submit"
                     disabled={saving || !currentPassword || !newPassword}
-                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold rounded-xl cursor-pointer disabled:opacity-60"
+                    className="tp-btn-ghost w-full py-3 text-sm font-bold cursor-pointer disabled:opacity-50"
                   >
                     Update Password
                   </button>

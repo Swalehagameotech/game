@@ -5,74 +5,74 @@ import axiosClient from '@/shared/api/axiosClient';
 
 const TUTORIAL_STEPS = [
   {
-    title: 'Step 1: Welcome to Teen Patti!',
+    title: 'Welcome to Teen Patti!',
     icon: Sparkles,
-    content: 'Welcome to the premier realtime multiplayer Teen Patti platform! Let us quickly walk you through how to play and win.',
+    content: 'Welcome to realtime multiplayer Teen Patti. This short guide covers how to play and win.',
   },
   {
-    title: 'Step 2: Your Wallet Balance',
+    title: 'Your Wallet',
     icon: Coins,
-    content: 'Every new player starts with ₹1,000 in demo chips! You can top up anytime using the "Add Demo Chips" button in your wallet.',
+    content: 'Use demo chips from your wallet to join tables. Top up anytime with Add Demo Chips.',
   },
   {
-    title: 'Step 3: Boot Amount',
+    title: 'Boot Amount',
     icon: Flame,
-    content: 'Before cards are dealt, every seated player automatically contributes the Boot Amount to start the round.',
+    content: 'Before cards are dealt, every seated player contributes the Boot Amount to start the round.',
   },
   {
-    title: 'Step 4: Table Pot',
+    title: 'Table Pot',
     icon: Layers,
-    content: 'All bets and boot contributions accumulate in the central Pot. The winner of the hand claims the entire Pot!',
+    content: 'All bets and boot contributions go into the central Pot. The hand winner takes it all.',
   },
   {
-    title: 'Step 5: Your 3 Dealt Cards',
+    title: 'Your 3 Cards',
     icon: Eye,
-    content: 'You receive 3 cards dealt face down from a single 52-card deck shuffled using secure server-side randomness.',
+    content: 'You receive 3 cards face down from a shuffled 52-card deck.',
   },
   {
-    title: 'Step 6: Playing Blind',
+    title: 'Playing Blind',
     icon: Shield,
-    content: 'Starting blind means you play without viewing your cards. Blind bets require 1x the current base stake.',
+    content: 'Blind means you play without viewing cards. Blind bets are 1x the current stake.',
   },
   {
-    title: 'Step 7: Seeing Your Cards',
+    title: 'Seeing Cards',
     icon: Eye,
-    content: 'Click "See Cards" anytime on your turn to view your cards. Once Seen, your bet requirement becomes 2x the base stake.',
+    content: 'Tap See Cards on your turn to view your hand. Seen players bet 2x the stake.',
   },
   {
-    title: 'Step 8: Chaal (Continue)',
+    title: 'Chaal',
     icon: ArrowRight,
-    content: 'Clicking Chaal matches the required bet to stay in the hand and advance turn to the next player.',
+    content: 'Chaal matches the required bet so you stay in the hand.',
   },
   {
-    title: 'Step 9: Raise',
+    title: 'Raise',
     icon: Flame,
-    content: 'Clicking Raise increases the base stake unit for all players, raising the stakes for the rest of the round.',
+    content: 'Raise increases the stake unit for everyone still in the round.',
   },
   {
-    title: 'Step 10: Pack (Fold)',
+    title: 'Pack (Fold)',
     icon: X,
-    content: 'If your cards are weak or strategy calls for it, click Pack to fold. If all opponents Pack, you win automatically!',
+    content: 'Pack folds your hand. If everyone else packs, you win the pot.',
   },
   {
-    title: 'Step 11: Side Show',
+    title: 'Side Show',
     icon: Layers,
-    content: 'When 3+ Seen players remain, you may request a Side Show with the previous Seen player to compare hands privately.',
+    content: 'With 3+ Seen players, request a Side Show with the previous Seen player.',
   },
   {
-    title: 'Step 12: Show',
+    title: 'Show',
     icon: Award,
-    content: 'When only 2 active players remain, click Show to reveal cards. The player with the higher-ranked hand wins the Pot!',
+    content: 'When only 2 players remain, Show reveals cards. Higher hand wins the pot.',
   },
   {
-    title: 'Step 13: Hand Rankings',
+    title: 'Hand Rankings',
     icon: Sparkles,
-    content: 'Rankings: 1. Trail (Trio) > 2. Pure Sequence (Straight Flush) > 3. Sequence (Straight) > 4. Color (Flush) > 5. Pair > 6. High Card.',
+    content: 'Trail > Pure Sequence > Sequence > Color > Pair > High Card.',
   },
   {
-    title: 'Step 14: You Are Ready!',
+    title: 'You Are Ready!',
     icon: Check,
-    content: 'Congratulations! You are now fully prepared to join a table and compete in realtime multiplayer Teen Patti.',
+    content: 'Join a table and compete in realtime Teen Patti.',
   },
 ];
 
@@ -112,67 +112,64 @@ export default function TutorialOverlay({ user, onComplete }) {
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-lg">
+      <div className="tp-modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
         <motion.div
-          initial={{ opacity: 0, scale: 0.9, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.9, y: 20 }}
-          className="w-full max-w-lg bg-slate-900 border border-amber-500/30 rounded-3xl shadow-2xl p-6 relative overflow-hidden"
+          initial={{ opacity: 0, y: 24, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 16, scale: 0.98 }}
+          className="tp-modal-panel w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
         >
-          {/* Header Glow */}
-          <div className="absolute -top-20 -right-20 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
-
-          {/* Top Bar */}
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-semibold uppercase tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
-              Interactive Guide ({currentStep + 1} / {TUTORIAL_STEPS.length})
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-[#1a1205] bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] px-3 py-1 rounded-full">
+              Guide {currentStep + 1}/{TUTORIAL_STEPS.length}
             </span>
             <button
+              type="button"
               onClick={finishTutorial}
-              className="text-slate-400 hover:text-slate-200 text-xs font-medium bg-slate-800/60 hover:bg-slate-800 px-3 py-1 rounded-full transition"
+              className="text-[#f5e6a8]/70 hover:text-[#f5e6a8] text-xs font-medium tp-btn-ghost px-3 py-1.5 cursor-pointer"
             >
-              Skip Guide
+              Skip
             </button>
           </div>
 
-          {/* Icon & Title */}
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-              <StepIcon className="w-6 h-6" />
+          <div className="flex items-start gap-3 mb-3">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 shrink-0 rounded-2xl border border-[#d4af37]/50 bg-black/35 flex items-center justify-center text-[#d4af37]">
+              <StepIcon className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <h3 className="text-xl font-bold text-slate-100">{TUTORIAL_STEPS[currentStep].title}</h3>
+            <h3 className="font-display text-lg sm:text-xl font-extrabold text-[#f5e6a8] leading-snug pt-1">
+              {TUTORIAL_STEPS[currentStep].title}
+            </h3>
           </div>
 
-          {/* Content */}
-          <p className="text-slate-300 leading-relaxed text-sm min-h-[80px] mb-6">
+          <p className="text-[#f5e6a8]/80 leading-relaxed text-sm min-h-[72px] mb-5">
             {TUTORIAL_STEPS[currentStep].content}
           </p>
 
-          {/* Progress Indicator Dots */}
-          <div className="flex items-center justify-center gap-1.5 mb-6">
+          <div className="flex items-center justify-center gap-1.5 mb-5 flex-wrap">
             {TUTORIAL_STEPS.map((_, idx) => (
               <div
                 key={idx}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
-                  idx === currentStep ? 'w-6 bg-amber-400' : 'w-1.5 bg-slate-700'
+                  idx === currentStep ? 'w-6 bg-[#d4af37]' : 'w-1.5 bg-[#d4af37]/25'
                 }`}
               />
             ))}
           </div>
 
-          {/* Bottom Actions */}
           <div className="flex items-center justify-between gap-3">
             <button
+              type="button"
               disabled={currentStep === 0}
               onClick={() => setCurrentStep((prev) => Math.max(0, prev - 1))}
-              className="px-4 py-2.5 rounded-xl border border-slate-700 hover:border-slate-600 text-slate-300 text-sm font-semibold disabled:opacity-30 disabled:pointer-events-none transition"
+              className="tp-btn-ghost px-4 py-2.5 text-sm font-semibold disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
             >
               Back
             </button>
 
             <button
+              type="button"
               onClick={handleNext}
-              className="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition"
+              className="tp-btn-gold flex-1 py-2.5 px-5 text-sm flex items-center justify-center gap-2 cursor-pointer"
             >
               {currentStep === TUTORIAL_STEPS.length - 1 ? (
                 <>
@@ -180,7 +177,7 @@ export default function TutorialOverlay({ user, onComplete }) {
                 </>
               ) : (
                 <>
-                  Next Step <ArrowRight className="w-4 h-4" />
+                  Next <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>

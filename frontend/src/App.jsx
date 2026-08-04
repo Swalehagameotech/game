@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import LobbyView from '@/features/lobby/LobbyView';
 import TeenPattiTableUI from '@/features/table/TeenPattiTableUI';
 import AuthModal from '@/features/auth/AuthModal';
@@ -14,11 +14,23 @@ import { useAuth } from '@/context/AuthContext';
 import useLandscapeLock from '@/hooks/useLandscapeLock';
 
 export default function App() {
-  useLandscapeLock();
   const { user, isAuthenticated } = useAuth();
   const [activeTableId, setActiveTableId] = useState(() => {
     return localStorage.getItem('activeTableId') || null;
   });
+
+  const inGame = Boolean(activeTableId);
+  useLandscapeLock(inGame);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('in-game', inGame);
+    const meta = document.querySelector('meta[name="screen-orientation"]');
+    if (meta) meta.setAttribute('content', inGame ? 'landscape' : 'any');
+    return () => {
+      document.documentElement.classList.remove('in-game');
+      if (meta) meta.setAttribute('content', 'any');
+    };
+  }, [inGame]);
 
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isWalletOpen, setIsWalletOpen] = useState(false);
@@ -61,7 +73,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-full min-h-full w-full bg-[#1a0505] text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 overflow-hidden">
+    <div className="h-full min-h-full w-full bg-[#1a0505] text-[#f5e6a8] flex flex-col font-sans selection:bg-[#d4af37] selection:text-[#1a0505] overflow-hidden">
       <NotificationBootstrap />
       {!activeTableId && <AnnouncementBanner />}
 

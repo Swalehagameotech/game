@@ -417,28 +417,28 @@ export default function LobbyView({
       {/* Create Table Modal */}
       <AnimatePresence>
         {showCreateModal && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="tp-modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative"
+              className="tp-modal-panel w-full sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative"
             >
-              <h3 className="text-xl font-bold text-slate-100 mb-1">
+              <h3 className="font-display text-xl font-extrabold text-[#f5e6a8] mb-1">
                 {createTableType === 'PUBLIC' ? 'Create Public Table' : 'Create Private Table'}
               </h3>
-              <p className="text-xs text-slate-400 mb-5">
+              <p className="text-xs text-[#f5e6a8]/60 mb-5">
                 {createTableType === 'PUBLIC' ? 'Create an open table for all players to join' : 'Generates a shareable 6-character code for private matches'}
               </p>
 
               {createdPrivateCode ? (
-                <div className="text-center py-6 bg-slate-950 border border-slate-800 rounded-xl p-4">
-                  <ShieldCheck className="w-12 h-12 text-emerald-400 mx-auto mb-2" />
-                  <span className="text-xs text-slate-400 block">PRIVATE INVITE CODE</span>
-                  <span className="text-3xl font-black text-amber-400 tracking-widest my-2 block font-mono">
+                <div className="text-center py-6 bg-black/40 border border-[#d4af37]/30 rounded-xl p-4">
+                  <ShieldCheck className="w-12 h-12 text-[#d4af37] mx-auto mb-2" />
+                  <span className="text-xs text-[#f5e6a8]/60 block">PRIVATE INVITE CODE</span>
+                  <span className="text-3xl font-black text-[#d4af37] tracking-widest my-2 block font-mono">
                     {createdPrivateCode}
                   </span>
-                  <p className="text-xs text-slate-400">Share this code with your friends to join your private room</p>
+                  <p className="text-xs text-[#f5e6a8]/60">Share this code with your friends to join your private room</p>
                   <button
                     onClick={() => {
                       setShowCreateModal(false);
@@ -455,7 +455,7 @@ export default function LobbyView({
                         onJoinTable(pendingCreatedTableId);
                       }
                     }}
-                    className="mt-5 px-6 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shadow-lg shadow-amber-500/20"
+                    className="tp-btn-gold mt-5 px-6 py-2.5 text-xs cursor-pointer"
                   >
                     Enter Game Table Now
                   </button>
@@ -463,11 +463,11 @@ export default function LobbyView({
               ) : (
                 <form onSubmit={handleCreateTableSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Variation</label>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Variation</label>
                     <select
                       value={selectedVariant}
                       onChange={(e) => setSelectedVariant(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                      className="tp-input p-2.5 text-sm"
                     >
                       {VARIANT_CARDS.map((v) => (
                         <option key={v.key} value={v.key}>{v.name}</option>
@@ -476,13 +476,13 @@ export default function LobbyView({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Table Access</label>
-                    <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 border border-slate-800 rounded-xl">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Table Access</label>
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-black/40 border border-[#d4af37]/25 rounded-xl">
                       <button
                         type="button"
                         onClick={() => setCreateTableType('PUBLIC')}
-                        className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                          createTableType === 'PUBLIC' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-slate-200'
+                        className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          createTableType === 'PUBLIC' ? 'bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[#1a1205] shadow-md' : 'text-[#f5e6a8]/60 hover:text-[#f5e6a8]'
                         }`}
                       >
                         Public (Open)
@@ -490,8 +490,8 @@ export default function LobbyView({
                       <button
                         type="button"
                         onClick={() => setCreateTableType('PRIVATE')}
-                        className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                          createTableType === 'PRIVATE' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-slate-200'
+                        className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          createTableType === 'PRIVATE' ? 'bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[#1a1205] shadow-md' : 'text-[#f5e6a8]/60 hover:text-[#f5e6a8]'
                         }`}
                       >
                         Private (Code)
@@ -500,11 +500,11 @@ export default function LobbyView({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Boot Amount (from Admin Settings)</label>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Boot Amount</label>
                     <select
                       value={createBootAmountPaise}
                       onChange={(e) => setCreateBootAmountPaise(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                      className="tp-input p-2.5 text-sm"
                     >
                       {bootOptionsPaise.map((boot) => (
                         <option key={boot} value={boot}>Boot ₹{(boot / 100).toFixed(0)}</option>
@@ -513,11 +513,11 @@ export default function LobbyView({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Minimum Players</label>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Minimum Players</label>
                     <select
                       value={createMinPlayers}
                       onChange={(e) => setCreateMinPlayers(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                      className="tp-input p-2.5 text-sm"
                     >
                       {[2, 3, 4, 5, 6].filter((n) => n <= createMaxPlayers).map((n) => (
                         <option key={n} value={n}>{n} Players (min to start)</option>
@@ -526,7 +526,7 @@ export default function LobbyView({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Maximum Players (3 to 6)</label>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Maximum Players</label>
                     <select
                       value={createMaxPlayers}
                       onChange={(e) => {
@@ -534,7 +534,7 @@ export default function LobbyView({
                         setCreateMaxPlayers(max);
                         if (createMinPlayers > max) setCreateMinPlayers(max);
                       }}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-200 focus:outline-none focus:border-amber-500/60"
+                      className="tp-input p-2.5 text-sm"
                     >
                       <option value={3}>3 Players (Minimum)</option>
                       <option value={4}>4 Players</option>
@@ -547,13 +547,13 @@ export default function LobbyView({
                     <button
                       type="button"
                       onClick={() => setShowCreateModal(false)}
-                      className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 cursor-pointer"
+                      className="px-4 py-2 text-xs font-bold text-[#f5e6a8]/60 hover:text-[#f5e6a8] cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="px-5 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shadow-lg shadow-amber-500/20"
+                      className="tp-btn-gold px-5 py-2.5 text-xs cursor-pointer"
                     >
                       Create Table
                     </button>
@@ -568,29 +568,29 @@ export default function LobbyView({
       {/* Private Table Code Join Modal */}
       <AnimatePresence>
         {showJoinPrivateModal && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="tp-modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative"
+              className="tp-modal-panel w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative"
             >
-              <h3 className="text-xl font-bold text-slate-100 mb-1 flex items-center gap-2">
-                <Key className="w-5 h-5 text-amber-400" />
+              <h3 className="font-display text-xl font-extrabold text-[#f5e6a8] mb-1 flex items-center gap-2">
+                <Key className="w-5 h-5 text-[#d4af37]" />
                 <span>Join Private Room</span>
               </h3>
-              <p className="text-xs text-slate-400 mb-5">Enter the private invite code provided by the host</p>
+              <p className="text-xs text-[#f5e6a8]/60 mb-5">Enter the private invite code provided by the host</p>
 
               <form onSubmit={handleJoinPrivateSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Invite Code</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5">Invite Code</label>
                   <input
                     type="text"
                     maxLength={7}
                     placeholder="e.g. AB12CD"
                     value={inviteCodeInput}
                     onChange={(e) => setInviteCodeInput(e.target.value.toUpperCase())}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-center text-xl font-black text-amber-400 uppercase tracking-widest font-mono focus:outline-none focus:border-amber-500/60"
+                    className="tp-input p-3 text-center text-xl font-black text-[#d4af37] uppercase tracking-widest font-mono"
                   />
                 </div>
 
@@ -598,13 +598,13 @@ export default function LobbyView({
                   <button
                     type="button"
                     onClick={() => setShowJoinPrivateModal(false)}
-                    className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 cursor-pointer"
+                    className="px-4 py-2 text-xs font-bold text-[#f5e6a8]/60 hover:text-[#f5e6a8] cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-xl hover:bg-amber-400 cursor-pointer shadow-lg shadow-amber-500/20"
+                    className="tp-btn-gold px-5 py-2.5 text-xs cursor-pointer"
                   >
                     Join Private Table
                   </button>
@@ -618,22 +618,22 @@ export default function LobbyView({
       {/* Quick Play — boot amount picker */}
       <AnimatePresence>
         {showQuickPlayModal && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="tp-modal-backdrop fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-sm bg-slate-900 border border-[#d4af37]/35 rounded-2xl p-6 shadow-2xl"
+              className="tp-modal-panel w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))]"
             >
-              <h3 className="text-xl font-bold text-[#f5e6a8] mb-1">Choose Boot Amount</h3>
-              <p className="text-xs text-slate-400 mb-5">
+              <h3 className="font-display text-xl font-extrabold text-[#f5e6a8] mb-1">Choose Boot Amount</h3>
+              <p className="text-xs text-[#f5e6a8]/60 mb-5">
                 Variation: <span className="text-[#d4af37] font-semibold">
                   {(quickPlayModalVariant || 'CLASSIC').replaceAll('_', ' ')}
                 </span>
                 {' '}· Same boot + same variant matchmaking
               </p>
 
-              <p className="text-xs font-semibold text-slate-300 mb-2">Boot amount (per player)</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#d4af37] mb-2">Boot amount (per player)</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-5">
                 {bootOptionsPaise.map((boot) => {
                   const selected = selectedBootPaise === boot;
