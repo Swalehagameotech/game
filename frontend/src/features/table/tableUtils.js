@@ -3,6 +3,10 @@ export const ACTIVE_HAND_STATUSES = ['RUNNING', 'IN_PROGRESS', 'PLAYING', 'SHOW'
 /** Statuses where cards are dealt / visible (not STARTING / waiting). */
 export const DEALABLE_HAND_STATUSES = ['RUNNING', 'IN_PROGRESS', 'PLAYING', 'SHOW'];
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
 export function isActiveHandStatus(status) {
   return ACTIVE_HAND_STATUSES.includes(status);
 }
@@ -17,6 +21,48 @@ export function isJoinableStatus(status) {
 
 export function isCountdownStatus(status, countdownSeconds = 0) {
   return status === 'COUNTDOWN' || status === 'NEXT_ROUND' || (countdownSeconds && countdownSeconds > 0);
+}
+
+/**
+ * Prevent stale ROUND_END + countdownSeconds:0 from wiping an active next-round timer.
+ * Refresh works because REST loads once; live/STOMP races need this guard.
+ */
+export function resolveStatusAndCountdown(prev, next, incoming) {
+  const incomingStatus = next.status ?? prev.status;
+  const hasCd = hasOwn(incoming, 'countdownSeconds');
+  const incomingCd = hasCd ? Number(next.countdownSeconds) || 0 : null;
+  const prevCd = Number(prev.countdownSeconds) || 0;
+  const prevNextRoundLive = prev.status === 'NEXT_ROUND' && prevCd > 0;
+
+  if (
+    isActiveHandStatus(incomingStatus)
+    || incomingStatus === 'WAITING'
+    || incomingStatus === 'CLOSED'
+    || incomingStatus === 'COUNTDOWN'
+    || incomingStatus === 'STARTING'
+  ) {
+    return {
+      status: incomingStatus,
+      countdownSeconds: hasCd ? incomingCd : (next.countdownSeconds ?? prev.countdownSeconds ?? 0),
+    };
+  }
+
+  if (incomingCd != null && incomingCd > 0) {
+    return { status: 'NEXT_ROUND', countdownSeconds: incomingCd };
+  }
+
+  if (
+    prevNextRoundLive
+    && (incomingStatus === 'ROUND_END' || incomingStatus === 'NEXT_ROUND')
+    && (incomingCd === 0 || incomingCd == null)
+  ) {
+    return { status: 'NEXT_ROUND', countdownSeconds: prevCd };
+  }
+
+  return {
+    status: incomingStatus,
+    countdownSeconds: hasCd ? incomingCd : (next.countdownSeconds ?? prev.countdownSeconds),
+  };
 }
 
 export function getTableStatusLabel(status) {
@@ -38,10 +84,6 @@ export function getTableStatusLabel(status) {
     default:
       return status || 'WAITING';
   }
-}
-
-function hasOwn(obj, key) {
-  return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
 
 function resolveSyntheticStatus(userId, data) {
@@ -136,7 +178,7 @@ export function mergeGameState(prev, incoming, user, options = {}) {
   if (!next) return prev ?? null;
   if (!prev) return next;
 
-  const status = next.status ?? prev.status;
+  const { status, countdownSeconds } = resolveStatusAndCountdown(prev, next, incoming);
   const turnFromIncoming = hasOwn(incoming, 'currentTurnPlayerId')
     || hasOwn(incoming, 'currentTurnUserId')
     || hasOwn(incoming, 'activeUserId');
@@ -260,7 +302,7 @@ export function mergeGameState(prev, incoming, user, options = {}) {
       ? (next.disconnectedPlayerIds || [])
       : (next.disconnectedPlayerIds?.length ? next.disconnectedPlayerIds : prev.disconnectedPlayerIds),
     hostId: hasOwn(incoming, 'hostId') ? next.hostId : (next.hostId ?? prev.hostId),
-    countdownSeconds: next.countdownSeconds ?? prev.countdownSeconds,
+    countdownSeconds,
     nextRoundSeconds: next.nextRoundSeconds ?? prev.nextRoundSeconds,
     tableType: next.tableType ?? prev.tableType,
     inviteCode: next.inviteCode ?? prev.inviteCode,

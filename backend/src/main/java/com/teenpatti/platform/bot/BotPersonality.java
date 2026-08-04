@@ -2,15 +2,16 @@ package com.teenpatti.platform.bot;
 
 /**
  * Bot play style — weights fold / call / raise / bluff and thinking pace.
+ * Tuned for strong table presence (low fold bias).
  */
 public enum BotPersonality {
-    AGGRESSIVE(0.55, 0.20, 0.12, 0.75, 0.85),
-    DEFENSIVE(0.15, 0.55, 0.04, 1.15, 1.10),
-    BLUFFER(0.35, 0.25, 0.18, 0.90, 0.95),
-    BALANCED(0.30, 0.40, 0.08, 1.00, 1.00),
-    RISKY(0.50, 0.20, 0.14, 0.70, 0.80),
-    BEGINNER(0.22, 0.45, 0.06, 1.20, 1.25),
-    PROFESSIONAL(0.38, 0.35, 0.07, 0.85, 0.90);
+    AGGRESSIVE(1.15, 0.08, 0.22, 0.85, 0.55),
+    DEFENSIVE(0.45, 0.22, 0.06, 1.05, 0.85),
+    BLUFFER(0.95, 0.10, 0.28, 0.90, 0.60),
+    BALANCED(0.85, 0.12, 0.14, 1.00, 0.65),
+    RISKY(1.20, 0.07, 0.24, 0.75, 0.50),
+    BEGINNER(0.55, 0.18, 0.08, 1.10, 0.80),
+    PROFESSIONAL(1.05, 0.09, 0.16, 0.90, 0.58);
 
     private final double raiseBias;
     private final double foldBias;
@@ -33,4 +34,17 @@ public enum BotPersonality {
     public double bluffChance() { return bluffChance; }
     public double thinkSpeed() { return thinkSpeed; }
     public double caution() { return caution; }
+
+    /** Prefer strong styles when spawning bots (~90% aggressive pool). */
+    public static BotPersonality randomStrong() {
+        BotPersonality[] strong = {
+                AGGRESSIVE, AGGRESSIVE, AGGRESSIVE,
+                RISKY, RISKY,
+                PROFESSIONAL, PROFESSIONAL, PROFESSIONAL,
+                BLUFFER, BLUFFER,
+                BALANCED,
+                DEFENSIVE
+        };
+        return strong[java.util.concurrent.ThreadLocalRandom.current().nextInt(strong.length)];
+    }
 }

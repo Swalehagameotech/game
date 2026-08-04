@@ -207,9 +207,27 @@ public class BotService {
             }
             if (result != null) {
                 log.debug("Bot action rejected [{}] {}: {}", userId, action, result);
-                // Fallback pack if still our turn
-                if (state.getAllowedActions() != null && state.getAllowedActions().contains("PACK")) {
-                    gameEngineService.processAction(tableId, userId, "PACK", 0L);
+                // Stay in pot — try call/chaal/blind before packing
+                String fallback = null;
+                List<String> allowed = state.getAllowedActions();
+                if (allowed != null) {
+                    for (String prefer : List.of("CHAAL", "CALL", "BLIND", "PLAY_BLIND", "RAISE")) {
+                        if (allowed.contains(prefer)) {
+                            fallback = prefer;
+                            break;
+                        }
+                    }
+                    if (fallback == null && allowed.contains("PACK")) {
+                        fallback = "PACK";
+                    }
+                }
+                if (fallback != null) {
+                    long amt = 0L;
+                    if ("RAISE".equals(fallback) && state.getRaiseOptionsPaise() != null
+                            && !state.getRaiseOptionsPaise().isEmpty()) {
+                        amt = state.getRaiseOptionsPaise().get(0);
+                    }
+                    gameEngineService.processAction(tableId, userId, fallback, amt);
                 }
             } else {
                 log.info("Bot [{}] played {} ({})", profile.getDisplayName(), action, decision.getReason());
@@ -315,12 +333,11 @@ public class BotService {
     }
 
     private BotProfile createProfile(User bot) {
-        BotPersonality personality = BotPersonality.values()[
-                ThreadLocalRandom.current().nextInt(BotPersonality.values().length)];
+        BotPersonality personality = BotPersonality.randomStrong();
         int seeAfter = switch (personality) {
-            case AGGRESSIVE, RISKY, BLUFFER -> ThreadLocalRandom.current().nextInt(2, 5);
-            case DEFENSIVE, PROFESSIONAL -> ThreadLocalRandom.current().nextInt(1, 3);
-            default -> ThreadLocalRandom.current().nextInt(1, 4);
+            case AGGRESSIVE, RISKY, BLUFFER -> ThreadLocalRandom.current().nextInt(3, 6);
+            case DEFENSIVE, PROFESSIONAL -> ThreadLocalRandom.current().nextInt(2, 4);
+            default -> ThreadLocalRandom.current().nextInt(2, 5);
         };
         return BotProfile.builder()
                 .userId(bot.getId())

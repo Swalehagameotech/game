@@ -100,26 +100,9 @@
   border-radius: 0.75rem;
 }
 
-/*
-  Home / lobby: stay natural orientation (vertical on phone).
-  Game room only: portrait phones get landscape stage (CSS rotate).
-*/
-@media screen and (orientation: portrait) and (max-width: 1024px) {
-  html.in-game #root {
-    position: fixed;
-    width: 100dvh;
-    height: 100dvw;
-    top: 0;
-    left: 0;
-    transform: rotate(90deg) translateY(-100%);
-    transform-origin: left top;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-}
-
+/* Home + game stay natural orientation (vertical on phone). No forced landscape rotate. */
 @media screen and (orientation: landscape) and (max-height: 500px) {
-  html.in-game #root {
+  #root {
     overflow: auto;
   }
 }

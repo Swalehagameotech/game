@@ -24,13 +24,13 @@ class HandStrengthEvaluatorTest {
     }
 
     @Test
-    void highPairIsStrong() {
+    void highPairIsVeryStrong() {
         List<Card> pair = List.of(
                 new Card(Suit.HEARTS, Rank.KING),
                 new Card(Suit.SPADES, Rank.KING),
                 new Card(Suit.CLUBS, Rank.FIVE)
         );
-        assertEquals(HandStrength.STRONG, evaluator.evaluate(pair));
+        assertEquals(HandStrength.VERY_STRONG, evaluator.evaluate(pair));
     }
 
     @Test

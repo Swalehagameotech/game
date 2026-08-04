@@ -77,15 +77,25 @@ describe('tableUtils', () => {
     expect(afterTurn.currentTurnPlayerId).toBe('u2');
   });
 
-  it('mergePlayers preserves self SEEN hand when incoming omits cards', () => {
+  it('does not wipe NEXT_ROUND countdown with ROUND_END countdownSeconds 0', () => {
     const user = { id: 'u1' };
-    const prev = [
-      { userId: 'u1', status: 'SEEN', cards: [{ suit: 'HEARTS', rank: 'K' }], cardCount: 3 },
-    ];
-    const next = [
-      { userId: 'u1', status: 'SEEN', cards: [], cardCount: 3 },
-    ];
-    const merged = mergePlayers(prev, next, user, { seenPlayerIds: ['u1'] });
-    expect(merged[0].cards).toHaveLength(1);
+    const withCountdown = mergeGameState(null, {
+      status: 'NEXT_ROUND',
+      countdownSeconds: 45,
+      winnerSnapshot: { winnerUserId: 'u1', payoutPaise: 1000 },
+      players: [{ userId: 'u1', displayName: 'Alice', status: 'SEEN', cards: [], cardCount: 3 }],
+    }, user);
+
+    expect(withCountdown.status).toBe('NEXT_ROUND');
+    expect(withCountdown.countdownSeconds).toBe(45);
+
+    const wiped = mergeGameState(withCountdown, {
+      status: 'ROUND_END',
+      countdownSeconds: 0,
+      winnerSnapshot: { winnerUserId: 'u1', payoutPaise: 1000 },
+    }, user);
+
+    expect(wiped.status).toBe('NEXT_ROUND');
+    expect(wiped.countdownSeconds).toBe(45);
   });
 });

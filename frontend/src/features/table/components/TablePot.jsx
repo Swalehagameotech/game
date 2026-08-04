@@ -59,6 +59,7 @@ export default function TablePot({
   winnerPosition,
   showPayoutFly,
   hideLabel = false,
+  potOrigin = POT_ORIGIN,
 }) {
   const prevPot = useRef(potPaise);
   const [betFlies, setBetFlies] = useState([]);
@@ -99,7 +100,7 @@ export default function TablePot({
         className={`absolute z-20 flex flex-col items-center justify-center -translate-x-1/2 -translate-y-1/2 scale-[0.72] sm:scale-100 origin-center transition-opacity ${
           hideLabel ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
-        style={{ left: '50%', top: '50%' }}
+        style={{ left: `${potOrigin.left}%`, top: `${potOrigin.top}%` }}
       >
         <ChipStack compact />
         <ChipStackDesktop />
@@ -127,8 +128,8 @@ export default function TablePot({
               className="absolute -translate-x-1/2 -translate-y-1/2"
               initial={{ left: `${f.from.left}%`, top: `${f.from.top}%`, opacity: 1, scale: 1 }}
               animate={{
-                left: `${POT_ORIGIN.left}%`,
-                top: `${POT_ORIGIN.top}%`,
+                left: `${potOrigin.left}%`,
+                top: `${potOrigin.top}%`,
                 opacity: [1, 1, 0],
                 scale: 0.65,
                 rotate: 160,
@@ -147,14 +148,14 @@ export default function TablePot({
               key={f.id}
               className="absolute -translate-x-1/2 -translate-y-1/2"
               initial={{
-                left: `${POT_ORIGIN.left}%`,
-                top: `${POT_ORIGIN.top}%`,
+                left: `${potOrigin.left}%`,
+                top: `${potOrigin.top}%`,
                 opacity: 1,
                 scale: 0.7,
               }}
               animate={{
-                left: `${winnerPosition?.left ?? POT_ORIGIN.left}%`,
-                top: `${winnerPosition?.top ?? POT_ORIGIN.top}%`,
+                left: `${winnerPosition?.left ?? potOrigin.left}%`,
+                top: `${winnerPosition?.top ?? potOrigin.top}%`,
                 opacity: [1, 1, 0],
                 scale: 1,
               }}

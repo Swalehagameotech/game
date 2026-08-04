@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { buildRotatedSeats, formatChipAmount } from './seatLayout';
+import { buildRotatedSeats, formatChipAmount, POT_ORIGIN, POT_ORIGIN_PORTRAIT } from './seatLayout';
 import PlayerSeat from './PlayerSeat';
 import TablePot from './TablePot';
 import DealAnimation from './DealAnimation';
@@ -8,6 +8,25 @@ import ShowdownHands from './ShowdownHands';
 
 export const TABLE_BG_URL =
   'https://res.cloudinary.com/dsafvwkrf/image/upload/v1785347801/Untitled_1920_x_1080_px_1_1_qgc3s6.webp';
+
+export const TABLE_BG_URL_PHONE =
+  'https://res.cloudinary.com/dsafvwkrf/image/upload/v1785836535/7a6586ce-d1fa-4803-8b69-08d98b3ffe7b.png';
+
+function usePhoneTableLayout() {
+  const [phone, setPhone] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 639px)').matches;
+  });
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)');
+    const onChange = (e) => setPhone(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  return phone;
+}
 
 /** Table image shown fully (no crop). Seats/pot overlay the image bounds.
  * Deal + seat cards only after enough players are seated and the hand is live.
@@ -34,9 +53,12 @@ export default function TableArena({
   winnerUserId,
   className = '',
 }) {
+  const phoneLayout = usePhoneTableLayout();
+  const potOrigin = phoneLayout ? POT_ORIGIN_PORTRAIT : POT_ORIGIN;
+
   const seats = useMemo(
-    () => buildRotatedSeats(players, myUserId),
-    [players, myUserId],
+    () => buildRotatedSeats(players, myUserId, { portrait: phoneLayout }),
+    [players, myUserId, phoneLayout],
   );
 
   const enoughPlayers = seats.length >= Math.max(2, minPlayers);
@@ -48,7 +70,6 @@ export default function TableArena({
   const prevReady = useRef(false);
 
   useEffect(() => {
-    // Only deal when ALL required players are in and hand is actually running
     const started = readyForCards && !prevReady.current;
     prevReady.current = readyForCards;
     if (!readyForCards) {
@@ -57,7 +78,6 @@ export default function TableArena({
       return;
     }
     if (started) {
-      // Mid-hand refresh/reconnect: cards already exist — skip re-deal, just show them
       const alreadyDealt = seats.some(
         (s) => (s.player?.cardCount > 0) || (Array.isArray(s.player?.cards) && s.player.cards.length > 0),
       );
@@ -86,7 +106,6 @@ export default function TableArena({
   );
 
   useEffect(() => {
-    // Lock total length when a turn starts so progress begins at 1 (full gold)
     setTurnTotal(Math.max(
       Number(turnDurationSeconds) || 0,
       Number(turnSecondsRemaining) || 0,
@@ -99,7 +118,6 @@ export default function TableArena({
       setLocalTurnSeconds(turnSecondsRemaining || 0);
       return undefined;
     }
-    // Prefer live deadline; fall back to counting down from turnSecondsRemaining
     if (turnDeadlineAt) {
       const tick = () => {
         const ms = new Date(turnDeadlineAt).getTime() - Date.now();
@@ -123,20 +141,25 @@ export default function TableArena({
   const turnProgress = Math.min(1, Math.max(0, localTurnSeconds / turnTotal));
 
   const showPayoutFly = Boolean(handEnded && winnerUserId);
-  /* Seat cards only after deal finishes (or mid-hand refresh when already dealt) */
   const showSeatCards = readyForCards && !dealActive && dealDone;
 
   return (
-    <div className={`relative inline-block max-w-full max-h-full ${className}`}>
-      {/* Image defines size — never cropped */}
+    <div className={`relative inline-block w-full sm:w-auto sm:max-w-full sm:max-h-full ${className}`}>
+      {/* Phone — natural image size (width fills screen, height follows aspect) */}
+      <img
+        src={TABLE_BG_URL_PHONE}
+        alt="Teen Patti table"
+        className="block sm:hidden w-[118%] max-w-none h-auto max-h-[78dvh] object-contain select-none pointer-events-none relative left-1/2 -translate-x-1/2"
+        draggable={false}
+      />
+      {/* Desktop / tablet — landscape felt */}
       <img
         src={TABLE_BG_URL}
         alt="Teen Patti table"
-        className="block w-auto h-auto max-w-full max-h-[min(50dvh,340px)] sm:max-h-[min(58dvh,500px)] md:max-h-[min(64dvh,600px)] lg:max-h-[min(68vh,660px)] object-contain select-none pointer-events-none"
+        className="hidden sm:block w-auto h-auto max-w-full max-h-[min(58dvh,500px)] md:max-h-[min(64dvh,600px)] lg:max-h-[min(68vh,660px)] object-contain select-none pointer-events-none"
         draggable={false}
       />
 
-      {/* Overlays match the rendered image box */}
       <div className="absolute inset-0">
         <TablePot
           potRupees={potRupees}
@@ -145,6 +168,7 @@ export default function TableArena({
           winnerPosition={winnerSeat?.position}
           showPayoutFly={showPayoutFly}
           hideLabel={Boolean(showdownRevealed && Object.keys(revealedHands || {}).length > 0)}
+          potOrigin={potOrigin}
         />
 
         <ShowdownHands
@@ -170,7 +194,6 @@ export default function TableArena({
               : (isMe ? (player.cards || []) : []);
 
             const hasFaceCards = visibleCards.length > 0;
-            /* After showdown, still show face cards even if deal flag is off */
             const showBacks = showSeatCards && !hasFaceCards && (handInProgress || (player.cardCount > 0)) && !showdownRevealed;
             const seatCards = (showSeatCards || showdownRevealed) && hasFaceCards ? visibleCards : [];
 

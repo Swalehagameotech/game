@@ -75,7 +75,7 @@ export default function WinnerEffects({
     return () => clearInterval(id);
   }, [show, status, winnerDisplayName]);
 
-  const nextRoundActive = status === 'NEXT_ROUND' && countdownSeconds > 0;
+  const nextRoundActive = countdownSeconds > 0;
   const payout = Number(winnerPayoutRupees || 0);
 
   return (

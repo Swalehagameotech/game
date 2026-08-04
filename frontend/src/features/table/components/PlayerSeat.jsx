@@ -138,86 +138,83 @@ export default function PlayerSeat({
       exit={{ opacity: 0, scale: 0.7 }}
       transition={{ type: 'spring', stiffness: 360, damping: 28 }}
       className="relative flex flex-col items-center select-none"
-      style={{ width: isMe ? Math.max(CARD_W + CARD_GAP * 2 + 70, 140) : Math.max(CARD_W + CARD_GAP * 2, 100) }}
+      style={{ width: Math.max(CARD_W + CARD_GAP * 2, 100) }}
     >
-      <div className="relative flex items-center">
-        <div
-          className="relative"
-          style={{
-            width: size,
-            height: size + (nCards > 0 ? CARD_H - CARD_BEHIND : 0),
-          }}
-        >
-          {nCards > 0 && (
-            <div
-              className="absolute left-1/2 top-0 z-[1] pointer-events-none"
-              style={{
-                width: CARD_W + CARD_GAP * 2,
-                height: CARD_H,
-                transform: 'translateX(-50%)',
-              }}
-            >
-              {Array.from({ length: nCards }).map((_, i) => (
-                <div
-                  key={i}
-                  className="absolute left-1/2 top-0"
-                  style={{
-                    transform: `translateX(calc(-50% + ${(i - 1) * CARD_GAP}px)) rotate(${(i - 1) * 9}deg)`,
-                    zIndex: i + 1,
-                  }}
-                >
-                  {faceCards ? (
-                    <PlayingCard suit={cards[i].suit} rank={cards[i].rank} width={CARD_W} height={CARD_H} />
-                  ) : (
-                    <PlayingCard faceDown width={CARD_W} height={CARD_H} />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
+      {/* Avatar + cards — always centered so seat left% lands on the avatar */}
+      <div
+        className="relative"
+        style={{
+          width: size,
+          height: size + (nCards > 0 ? CARD_H - CARD_BEHIND : 0),
+        }}
+      >
+        {nCards > 0 && (
           <div
-            className="absolute left-0 z-10"
+            className="absolute left-1/2 top-0 z-[1] pointer-events-none"
             style={{
-              top: nCards > 0 ? CARD_H - CARD_BEHIND : 0,
-              width: size,
-              height: size,
+              width: CARD_W + CARD_GAP * 2,
+              height: CARD_H,
+              transform: 'translateX(-50%)',
             }}
           >
-            <TurnRing progress={turnProgress} active={Boolean(isTurn)} />
-            <div
-              className="w-full h-full rounded-full overflow-hidden bg-[#1a1a22]"
-              style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}
-            >
-              <img
-                src={avatarSrc}
-                alt=""
-                className="w-full h-full object-cover"
-                draggable={false}
-              />
-            </div>
-
-            <span
-              className={`absolute -bottom-0.5 -right-0.5 z-20 min-w-[16px] h-[16px] px-0.5 rounded-full bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[7px] font-black text-black flex items-center justify-center tabular-nums shadow ${
-                isTurn ? 'ring-2 ring-[#f5d76e]' : ''
-              }`}
-            >
-              {badgeLabel}
-            </span>
-          </div>
-        </div>
-
-        {isMe && balanceLabel && balanceLabel !== '₹—' && (
-          <div
-            className="ml-2 px-2.5 py-1.5 rounded-md bg-black/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(212,175,55,0.5)] whitespace-nowrap"
-            style={{ marginTop: nCards > 0 ? CARD_H - CARD_BEHIND + size * 0.25 : size * 0.25 }}
-          >
-            <p className="flex items-center justify-center gap-1 text-[10px] font-semibold text-white leading-none">
-              <MiniChip size={10} />
-              {balanceLabel}
-            </p>
+            {Array.from({ length: nCards }).map((_, i) => (
+              <div
+                key={i}
+                className="absolute left-1/2 top-0"
+                style={{
+                  transform: `translateX(calc(-50% + ${(i - 1) * CARD_GAP}px)) rotate(${(i - 1) * 9}deg)`,
+                  zIndex: i + 1,
+                }}
+              >
+                {faceCards ? (
+                  <PlayingCard suit={cards[i].suit} rank={cards[i].rank} width={CARD_W} height={CARD_H} />
+                ) : (
+                  <PlayingCard faceDown width={CARD_W} height={CARD_H} />
+                )}
+              </div>
+            ))}
           </div>
         )}
+
+        <div
+          className="absolute left-1/2 -translate-x-1/2 z-10"
+          style={{
+            top: nCards > 0 ? CARD_H - CARD_BEHIND : 0,
+            width: size,
+            height: size,
+          }}
+        >
+          <TurnRing progress={turnProgress} active={Boolean(isTurn)} />
+          <div
+            className="w-full h-full rounded-full overflow-hidden bg-[#1a1a22]"
+            style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}
+          >
+            <img
+              src={avatarSrc}
+              alt=""
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+          </div>
+
+          <span
+            className={`absolute -bottom-0.5 -right-0.5 z-20 min-w-[16px] h-[16px] px-0.5 rounded-full bg-gradient-to-b from-[#f5e6a8] to-[#d4af37] text-[7px] font-black text-black flex items-center justify-center tabular-nums shadow ${
+              isTurn ? 'ring-2 ring-[#f5d76e]' : ''
+            }`}
+          >
+            {badgeLabel}
+          </span>
+
+          {/* Wallet chip floats beside avatar — does not shift center */}
+          {isMe && balanceLabel && balanceLabel !== '₹—' && (
+            <div className="absolute left-full top-1/2 -translate-y-1/2 ml-1.5 px-2 py-1 rounded-md bg-black/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(212,175,55,0.5)] whitespace-nowrap">
+              <p className="flex items-center justify-center gap-1 text-[10px] font-semibold text-white leading-none">
+                <MiniChip size={10} />
+                {balanceLabel}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {!isMe && balanceLabel && balanceLabel !== '₹—' && (

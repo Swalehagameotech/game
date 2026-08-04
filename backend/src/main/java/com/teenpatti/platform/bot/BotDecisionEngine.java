@@ -2,7 +2,6 @@ package com.teenpatti.platform.bot;
 
 import com.teenpatti.platform.game.betting.BettingState;
 import com.teenpatti.platform.game.engine.Card;
-import com.teenpatti.platform.game.engine.PlayerStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -11,7 +10,7 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Probability-based Teen Patti bot decisions using only information a human would have.
+ * Strong Teen Patti bots — stay in pots, raise pressure, rarely snap-pack.
  */
 @Component
 @RequiredArgsConstructor
@@ -30,7 +29,6 @@ public class BotDecisionEngine {
             return BotDecision.builder().actionType("PACK").reason("no-actions").build();
         }
 
-        // Side-show / show response — never cheat; randomize accept/reject with personality.
         if (allowed.contains("SHOW_ACCEPT") || allowed.contains("SHOW_REJECT")) {
             return decideShowResponse(profile, allowed, ownCards);
         }
@@ -50,9 +48,9 @@ public class BotDecisionEngine {
         if (!blind && ownCards != null && ownCards.size() == 3) {
             strength = handStrengthEvaluator.evaluate(ownCards);
         } else if (blind) {
-            // Blind: unknown cards — treat as medium with personality noise
-            strength = ThreadLocalRandom.current().nextDouble() < 0.35
-                    ? HandStrength.WEAK : HandStrength.MEDIUM;
+            // Blind: assume playable — do not invent "weak" and snap-fold
+            strength = ThreadLocalRandom.current().nextDouble() < 0.20
+                    ? HandStrength.STRONG : HandStrength.MEDIUM;
         }
 
         boolean seeFirst = false;
@@ -62,7 +60,7 @@ public class BotDecisionEngine {
             seeFirst = true;
         }
 
-        String action = pickBettingAction(profile, state, allowed, strength, blind);
+        String action = pickBettingAction(profile, state, allowed, strength, blind, bettingRoundHint);
         long amount = 0L;
         if ("RAISE".equals(action) && state.getRaiseOptionsPaise() != null && !state.getRaiseOptionsPaise().isEmpty()) {
             amount = pickRaiseAmount(profile, strength, state.getRaiseOptionsPaise());
@@ -80,15 +78,16 @@ public class BotDecisionEngine {
         HandStrength s = (cards != null && cards.size() == 3)
                 ? handStrengthEvaluator.evaluate(cards) : HandStrength.MEDIUM;
         double acceptP = switch (s) {
-            case VERY_STRONG -> 0.92;
-            case STRONG -> 0.75;
-            case MEDIUM -> 0.45;
-            case WEAK -> 0.22;
-            case VERY_WEAK -> 0.10;
+            case VERY_STRONG -> 0.96;
+            case STRONG -> 0.88;
+            case MEDIUM -> 0.62;
+            case WEAK -> 0.35;
+            case VERY_WEAK -> 0.18;
         };
         if (profile.getPersonality() == BotPersonality.AGGRESSIVE
-                || profile.getPersonality() == BotPersonality.RISKY) {
-            acceptP += 0.10;
+                || profile.getPersonality() == BotPersonality.RISKY
+                || profile.getPersonality() == BotPersonality.PROFESSIONAL) {
+            acceptP += 0.08;
         }
         boolean accept = ThreadLocalRandom.current().nextDouble() < acceptP && allowed.contains("SHOW_ACCEPT");
         String action = accept ? "SHOW_ACCEPT" : (allowed.contains("SHOW_REJECT") ? "SHOW_REJECT" : "SHOW_ACCEPT");
@@ -99,9 +98,9 @@ public class BotDecisionEngine {
         HandStrength s = (cards != null && cards.size() == 3)
                 ? handStrengthEvaluator.evaluate(cards) : HandStrength.MEDIUM;
         double acceptP = switch (s) {
-            case VERY_STRONG, STRONG -> 0.70;
-            case MEDIUM -> 0.40;
-            case WEAK, VERY_WEAK -> 0.18;
+            case VERY_STRONG, STRONG -> 0.82;
+            case MEDIUM -> 0.55;
+            case WEAK, VERY_WEAK -> 0.22;
         };
         boolean accept = ThreadLocalRandom.current().nextDouble() < acceptP && allowed.contains("SIDE_SHOW_ACCEPT");
         String action = accept ? "SIDE_SHOW_ACCEPT"
@@ -113,8 +112,8 @@ public class BotDecisionEngine {
         HandStrength s = (cards != null && cards.size() == 3)
                 ? handStrengthEvaluator.evaluate(cards) : HandStrength.MEDIUM;
         boolean bid = allowed.contains("AUCTION_BID")
-                && (s == HandStrength.VERY_STRONG || s == HandStrength.STRONG
-                || ThreadLocalRandom.current().nextDouble() < 0.35);
+                && (s == HandStrength.VERY_STRONG || s == HandStrength.STRONG || s == HandStrength.MEDIUM
+                || ThreadLocalRandom.current().nextDouble() < 0.45);
         if (bid) {
             long min = Math.max(state.getAuctionMinBidPaise(), 1L);
             return BotDecision.builder().actionType("AUCTION_BID").amountPaise(min).reason("auction-bid").build();
@@ -126,15 +125,12 @@ public class BotDecisionEngine {
 
     private double seeProbability(BotProfile profile, HandStrength guessed) {
         double base = switch (profile.getPersonality()) {
-            case PROFESSIONAL, DEFENSIVE -> 0.70;
-            case BEGINNER -> 0.55;
-            case AGGRESSIVE, RISKY, BLUFFER -> 0.35;
-            case BALANCED -> 0.50;
+            case PROFESSIONAL, DEFENSIVE -> 0.55;
+            case BEGINNER -> 0.45;
+            case AGGRESSIVE, RISKY, BLUFFER -> 0.25;
+            case BALANCED -> 0.40;
         };
-        if (guessed == HandStrength.WEAK || guessed == HandStrength.VERY_WEAK) {
-            base += 0.15;
-        }
-        return Math.min(0.90, base);
+        return Math.min(0.70, base);
     }
 
     private String pickBettingAction(
@@ -142,14 +138,15 @@ public class BotDecisionEngine {
             BettingState state,
             List<String> allowed,
             HandStrength strength,
-            boolean blind) {
+            boolean blind,
+            int bettingRoundHint) {
 
         ThreadLocalRandom rng = ThreadLocalRandom.current();
         BotPersonality p = profile.getPersonality();
 
-        // Occasional bluff with weak hands
+        // Strong bots bluff more often instead of packing weak hands
         boolean bluffing = (strength == HandStrength.WEAK || strength == HandStrength.VERY_WEAK)
-                && rng.nextDouble() < Math.min(0.15, p.bluffChance());
+                && rng.nextDouble() < Math.min(0.45, p.bluffChance() * 1.8);
 
         double raiseW;
         double callW;
@@ -158,61 +155,77 @@ public class BotDecisionEngine {
         double sideW = 0.0;
 
         if (bluffing) {
-            raiseW = 0.55 * p.raiseBias();
-            callW = 0.30;
-            foldW = 0.15 * p.foldBias() * p.caution();
+            raiseW = 0.70 * p.raiseBias();
+            callW = 0.28;
+            foldW = 0.02;
         } else {
             switch (strength) {
                 case VERY_STRONG -> {
-                    raiseW = 0.70 * p.raiseBias();
-                    callW = 0.20;
-                    foldW = 0.02;
-                    showW = 0.10;
+                    raiseW = 0.78 * p.raiseBias();
+                    callW = 0.18;
+                    foldW = 0.005;
+                    showW = 0.18;
                 }
                 case STRONG -> {
-                    raiseW = 0.50 * p.raiseBias();
-                    callW = 0.35;
-                    foldW = 0.08 * p.foldBias();
-                    showW = 0.12;
+                    raiseW = 0.62 * p.raiseBias();
+                    callW = 0.32;
+                    foldW = 0.015;
+                    showW = 0.16;
                 }
                 case MEDIUM -> {
-                    raiseW = 0.30 * p.raiseBias();
-                    callW = 0.50;
-                    foldW = 0.20 * p.foldBias() * p.caution();
+                    raiseW = 0.42 * p.raiseBias();
+                    callW = 0.55;
+                    foldW = 0.04 * p.foldBias() * p.caution();
                 }
                 case WEAK -> {
-                    raiseW = 0.10 * p.raiseBias();
-                    callW = 0.30;
-                    foldW = 0.60 * p.foldBias() * p.caution();
+                    raiseW = 0.28 * p.raiseBias();
+                    callW = 0.62;
+                    foldW = 0.12 * p.foldBias() * p.caution();
                 }
                 case VERY_WEAK -> {
-                    raiseW = 0.05 * p.raiseBias();
-                    callW = 0.25;
-                    foldW = 0.70 * p.foldBias() * p.caution();
+                    raiseW = 0.18 * p.raiseBias();
+                    callW = 0.58;
+                    foldW = 0.22 * p.foldBias() * p.caution();
                 }
                 default -> {
-                    raiseW = 0.25;
-                    callW = 0.45;
-                    foldW = 0.30;
+                    raiseW = 0.40;
+                    callW = 0.55;
+                    foldW = 0.05;
                 }
             }
         }
 
-        if (allowed.contains("SIDE_SHOW_REQUEST") && !blind
-                && (strength == HandStrength.STRONG || strength == HandStrength.VERY_STRONG
-                || rng.nextDouble() < 0.12)) {
-            sideW = 0.18;
-        }
-        if (allowed.contains("SHOW") && (strength == HandStrength.VERY_STRONG || strength == HandStrength.STRONG)) {
-            showW = Math.max(showW, 0.15);
+        // Early rounds: almost never pack — stay glued to the pot
+        if (bettingRoundHint <= 2) {
+            foldW *= 0.15;
+            callW += 0.20;
+            raiseW += 0.08;
+        } else if (bettingRoundHint <= 4) {
+            foldW *= 0.45;
         }
 
-        // Map weights onto available actions
+        // Blind play: packing without seeing looks weak — suppress hard
+        if (blind) {
+            foldW *= 0.08;
+            callW += 0.25;
+        }
+
+        if (allowed.contains("SIDE_SHOW_REQUEST") && !blind
+                && (strength == HandStrength.STRONG || strength == HandStrength.VERY_STRONG
+                || strength == HandStrength.MEDIUM
+                || rng.nextDouble() < 0.18)) {
+            sideW = 0.22;
+        }
+        if (allowed.contains("SHOW") && (strength == HandStrength.VERY_STRONG
+                || strength == HandStrength.STRONG
+                || strength == HandStrength.MEDIUM)) {
+            showW = Math.max(showW, 0.20);
+        }
+
         List<Weighted> options = new ArrayList<>();
         if (allowed.contains("RAISE") && raiseW > 0) {
             options.add(new Weighted("RAISE", raiseW));
         }
-        // Blind play vs chaal/call
         if (blind && (allowed.contains("BLIND") || allowed.contains("PLAY_BLIND"))) {
             String blindAct = allowed.contains("BLIND") ? "BLIND" : "PLAY_BLIND";
             options.add(new Weighted(blindAct, callW));
@@ -220,8 +233,9 @@ public class BotDecisionEngine {
             if (allowed.contains("CHAAL")) options.add(new Weighted("CHAAL", callW));
             if (allowed.contains("CALL")) options.add(new Weighted("CALL", callW));
         }
-        if (allowed.contains("PACK") && foldW > 0) {
-            options.add(new Weighted("PACK", foldW));
+        // Cap pack so it never dominates (~ max ~12% of weight pool in practice)
+        if (allowed.contains("PACK") && foldW > 0.001) {
+            options.add(new Weighted("PACK", Math.min(foldW, 0.12)));
         }
         if (allowed.contains("SHOW") && showW > 0) {
             options.add(new Weighted("SHOW", showW));
@@ -231,26 +245,32 @@ public class BotDecisionEngine {
         }
 
         if (options.isEmpty()) {
-            // Fallback: first non-see action, else pack
-            for (String a : allowed) {
-                if (!"SEE_CARDS".equals(a)) return a;
-            }
-            return "PACK";
+            return preferredStayAction(allowed);
         }
 
         return pickWeighted(options, rng);
     }
 
+    /** Prefer staying in over packing when weights collapse. */
+    private String preferredStayAction(List<String> allowed) {
+        for (String prefer : List.of("CHAAL", "CALL", "BLIND", "PLAY_BLIND", "RAISE", "SHOW")) {
+            if (allowed.contains(prefer)) return prefer;
+        }
+        for (String a : allowed) {
+            if (!"SEE_CARDS".equals(a) && !"PACK".equals(a)) return a;
+        }
+        return allowed.contains("PACK") ? "PACK" : allowed.get(0);
+    }
+
     private long pickRaiseAmount(BotProfile profile, HandStrength strength, List<Long> options) {
         if (options.size() == 1) return options.get(0);
         ThreadLocalRandom rng = ThreadLocalRandom.current();
-        // Aggressive / strong → prefer higher raises
         double highBias = profile.getPersonality().raiseBias()
-                * (strength == HandStrength.VERY_STRONG || strength == HandStrength.STRONG ? 1.2 : 0.7);
-        if (rng.nextDouble() < highBias) {
+                * (strength == HandStrength.VERY_STRONG || strength == HandStrength.STRONG ? 1.35 : 0.95);
+        if (rng.nextDouble() < Math.min(0.85, highBias)) {
             return options.get(options.size() - 1);
         }
-        if (rng.nextDouble() < 0.5) {
+        if (rng.nextDouble() < 0.55) {
             return options.get(options.size() / 2);
         }
         return options.get(0);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import LobbyView from '@/features/lobby/LobbyView';
 import TeenPattiTableUI from '@/features/table/TeenPattiTableUI';
 import AuthModal from '@/features/auth/AuthModal';
@@ -11,26 +11,12 @@ import AdminModal from '@/features/admin/AdminModal';
 import ProfileModal from '@/features/user/ProfileModal';
 import TutorialOverlay from '@/features/auth/TutorialOverlay';
 import { useAuth } from '@/context/AuthContext';
-import useLandscapeLock from '@/hooks/useLandscapeLock';
 
 export default function App() {
   const { user, isAuthenticated } = useAuth();
   const [activeTableId, setActiveTableId] = useState(() => {
     return localStorage.getItem('activeTableId') || null;
   });
-
-  const inGame = Boolean(activeTableId);
-  useLandscapeLock(inGame);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('in-game', inGame);
-    const meta = document.querySelector('meta[name="screen-orientation"]');
-    if (meta) meta.setAttribute('content', inGame ? 'landscape' : 'any');
-    return () => {
-      document.documentElement.classList.remove('in-game');
-      if (meta) meta.setAttribute('content', 'any');
-    };
-  }, [inGame]);
 
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isWalletOpen, setIsWalletOpen] = useState(false);

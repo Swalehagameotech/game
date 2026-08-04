@@ -439,6 +439,12 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             }
             if (state?.winnerSnapshot && (state.status === 'ROUND_END' || state.status === 'NEXT_ROUND'
               || merged.status === 'ROUND_END' || merged.status === 'NEXT_ROUND')) {
+              const incomingCd = Number(state.countdownSeconds) || 0;
+              const keepCd = incomingCd > 0 ? incomingCd : (merged.countdownSeconds || 0);
+              const nextStatus = (state.status === 'NEXT_ROUND' && incomingCd > 0)
+                || (merged.status === 'NEXT_ROUND' && keepCd > 0 && state.status === 'ROUND_END')
+                ? 'NEXT_ROUND'
+                : (state.status || merged.status || 'ROUND_END');
               return {
                 ...merged,
                 winnerSnapshot: {
@@ -451,7 +457,8 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                     ?? state.winnerSnapshot.payoutPaise,
                 },
                 handOutcome: state.handOutcome || merged.handOutcome,
-                status: state.status || merged.status || 'ROUND_END',
+                status: nextStatus,
+                countdownSeconds: keepCd,
               };
             }
             return merged;
@@ -1464,9 +1471,18 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
             const payout = Number(
               snap.payoutPaise ?? snap.winnerPayoutPaise ?? data.handOutcome?.winnerPayoutPaise ?? snap.potPaise ?? 0,
             );
+            const incomingCd = Number(data.countdownSeconds);
+            const prevCd = Number(next.countdownSeconds) || Number(prev?.countdownSeconds) || 0;
+            const keepCd = Number.isFinite(incomingCd) && incomingCd > 0
+              ? incomingCd
+              : (prev?.status === 'NEXT_ROUND' && prevCd > 0 ? prevCd : (incomingCd || next.countdownSeconds || 0));
+            const nextStatus = (data.status === 'NEXT_ROUND' && keepCd > 0)
+              || (prev?.status === 'NEXT_ROUND' && keepCd > 0 && data.status === 'ROUND_END')
+              ? 'NEXT_ROUND'
+              : (data.status || prev?.status || 'ROUND_END');
             return {
               ...next,
-              status: data.status || prev?.status || 'ROUND_END',
+              status: nextStatus,
               winnerSnapshot: {
                 ...snap,
                 payoutPaise: payout,
@@ -1478,7 +1494,7 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
                 winnerPayoutPaise: payout,
                 winningCategory: snap.winningCategory,
               },
-              countdownSeconds: data.countdownSeconds ?? next.countdownSeconds,
+              countdownSeconds: keepCd,
             };
           }
           return next;
@@ -1786,60 +1802,96 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
         </button>
       </div>
 
-      {/* Main row (landscape): table + actions packed for short height */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-2 sm:px-3 pt-4 sm:pt-8 pb-2 min-h-0">
-        <div className="relative w-full max-w-[1200px] flex justify-center shrink min-h-0 max-h-[min(52dvh,360px)] sm:max-h-[min(60dvh,520px)] md:max-h-[min(66dvh,620px)] -translate-y-0 sm:-translate-y-2">
-          <TableArena
-            players={players}
-            myUserId={user?.id}
-            currentTurnUserId={currentTurnUserId}
-            dealerSeatIndex={dealerSeatIndex}
-            hostId={hostId}
-            handInProgress={handInProgress}
-            cardsLive={cardsLive}
-            minPlayers={minPlayers}
-            handEnded={handEnded}
-            showdownRevealed={showdownRevealed}
-            revealedHands={revealedHands}
-            disconnectedIds={gameState?.disconnectedPlayerIds || []}
-            potRupees={potRupees}
-            potPaise={gameState?.potPaise || 0}
-            walletBalancePaise={gameState?.walletBalancePaise}
-            turnDeadlineAt={gameState?.turnDeadlineAt}
-            turnSecondsRemaining={gameState?.turnSecondsRemaining}
-            turnDurationSeconds={
-              gameState?.turnDurationSeconds
-              || gameState?.turnTimeoutSeconds
-              || gameState?.turnTimerSeconds
-              || 30
-            }
-            winnerUserId={winnerSnapshot?.winnerUserId || handOutcome?.winnerId}
-          />
+      {/* Main column: table on top, actions pinned bottom (phone vertical) */}
+      <div className="relative z-10 flex-1 flex flex-col min-h-0 pt-8 sm:pt-14 pb-[env(safe-area-inset-bottom)]">
+        <div className="relative flex-1 flex items-start sm:items-center justify-center min-h-0 px-0 sm:px-3 pt-3 sm:py-1 overflow-x-hidden overflow-y-auto sm:overflow-visible">
+          <div className="relative w-full sm:max-w-[1200px] flex justify-center shrink-0 sm:shrink sm:min-h-0 sm:h-full sm:max-h-[min(62dvh,560px)] md:max-h-[min(68dvh,640px)] mt-2 sm:mt-0">
+            <TableArena
+              players={players}
+              myUserId={user?.id}
+              currentTurnUserId={currentTurnUserId}
+              dealerSeatIndex={dealerSeatIndex}
+              hostId={hostId}
+              handInProgress={handInProgress}
+              cardsLive={cardsLive}
+              minPlayers={minPlayers}
+              handEnded={handEnded}
+              showdownRevealed={showdownRevealed}
+              revealedHands={revealedHands}
+              disconnectedIds={gameState?.disconnectedPlayerIds || []}
+              potRupees={potRupees}
+              potPaise={gameState?.potPaise || 0}
+              walletBalancePaise={gameState?.walletBalancePaise}
+              turnDeadlineAt={gameState?.turnDeadlineAt}
+              turnSecondsRemaining={gameState?.turnSecondsRemaining}
+              turnDurationSeconds={
+                gameState?.turnDurationSeconds
+                || gameState?.turnTimeoutSeconds
+                || gameState?.turnTimerSeconds
+                || 30
+              }
+              winnerUserId={winnerSnapshot?.winnerUserId || handOutcome?.winnerId}
+            />
 
-          {!handInProgress && (
-            <div className="absolute top-[18%] left-1/2 -translate-x-1/2 z-30 w-[min(90%,280px)] text-center pointer-events-auto">
-              {(status === 'COUNTDOWN' || status === 'NEXT_ROUND' || countdownSeconds > 0) && (
-                <div className="hidden sm:block text-5xl font-black text-[#d4af37] font-mono drop-shadow-[0_0_16px_rgba(212,175,55,0.55)] mb-2">
-                  {countdownSeconds}
-                </div>
-              )}
-              {!isTableLoading && isPrivateTable && isHost && canStart && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
-                <button
-                  type="button"
-                  onClick={handleStartGame}
-                  disabled={startLoading}
-                  className="px-5 sm:px-8 py-1.5 sm:py-2.5 rounded-full bg-black/40 backdrop-blur-sm text-[#f5e6a8] font-black text-xs sm:text-sm cursor-pointer disabled:opacity-60 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_24px_rgba(212,175,55,0.35)]"
-                >
-                  {startLoading ? 'Starting…' : status === 'ROUND_END' ? 'Start Next Round' : 'Start Game'}
-                </button>
-              )}
-              {startError && <p className="mt-1 text-[10px] text-rose-300 drop-shadow">{startError}</p>}
-            </div>
-          )}
+            {!handInProgress && (
+              <div className="absolute top-[18%] left-1/2 -translate-x-1/2 z-30 w-[min(90%,280px)] text-center pointer-events-auto">
+                {(status === 'COUNTDOWN' || status === 'NEXT_ROUND' || countdownSeconds > 0) && (
+                  <div className="text-4xl sm:text-5xl font-black text-[#d4af37] font-mono drop-shadow-[0_0_16px_rgba(212,175,55,0.55)] mb-2">
+                    {countdownSeconds}
+                  </div>
+                )}
+                {!isTableLoading && isPrivateTable && isHost && canStart && status !== 'COUNTDOWN' && status !== 'NEXT_ROUND' && (
+                  <button
+                    type="button"
+                    onClick={handleStartGame}
+                    disabled={startLoading}
+                    className="px-5 sm:px-8 py-1.5 sm:py-2.5 rounded-full bg-black/40 backdrop-blur-sm text-[#f5e6a8] font-black text-xs sm:text-sm cursor-pointer disabled:opacity-60 shadow-[0_0_0_1.5px_rgba(212,175,55,0.7),0_0_24px_rgba(212,175,55,0.35)]"
+                  >
+                    {startLoading ? 'Starting…' : status === 'ROUND_END' ? 'Start Next Round' : 'Start Game'}
+                  </button>
+                )}
+                {startError && <p className="mt-1 text-[10px] text-rose-300 drop-shadow">{startError}</p>}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Action buttons — one horizontal row */}
-        <div className="w-full max-w-5xl mt-2 sm:mt-6 shrink-0 px-1">
+        {/* Status + boot strip above buttons on phone */}
+        <div className="shrink-0 px-3 flex items-center justify-between gap-2 sm:hidden">
+          <div className="min-w-0 flex-1 px-2 py-1 rounded-xl bg-black/50 backdrop-blur-md">
+            <div className="flex items-center gap-1.5 text-[9px] text-white">
+              {(isTableLoading || status === 'COUNTDOWN' || dealActiveLike(status, handInProgress, countdownSeconds)) && (
+                <Loader2 className="w-3 h-3 text-[#d4af37] animate-spin shrink-0" />
+              )}
+              <div className="min-w-0">
+                <div className="text-[8px] text-emerald-400 font-semibold">Game Status</div>
+                <div className="text-white/90 truncate">{statusBannerText}</div>
+              </div>
+            </div>
+            {handInProgress && currentTurnUserId && (
+              <p className="mt-0.5 text-[8px] text-[#f5e6a8] font-semibold truncate">
+                {isMyTurn ? `Your turn${turnDisplaySeconds > 0 ? ` · ${turnDisplaySeconds}s` : ''}` : `Waiting · ${turnPlayerName}`}
+              </p>
+            )}
+            {!handInProgress && (status === 'COUNTDOWN' || countdownSeconds > 0) && (
+              <p className="mt-0.5 text-[10px] font-black text-[#d4af37] tabular-nums">
+                Starting {countdownSeconds}s
+              </p>
+            )}
+          </div>
+          <div className="shrink-0 px-2 py-1 rounded-xl bg-black/50 backdrop-blur-md shadow-[0_0_0_1px_rgba(212,175,55,0.4)]">
+            <div className="flex items-center gap-1 text-[9px] text-white">
+              <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden className="shrink-0">
+                <circle cx="12" cy="12" r="11" fill="#d4af37" stroke="#f5e6a8" strokeWidth="1.5" />
+                <circle cx="12" cy="12" r="6" fill="none" stroke="#7a5a12" strokeWidth="1.2" strokeDasharray="2 1.5" />
+              </svg>
+              <span className="truncate">Boot <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Action buttons — bottom dock on phone */}
+        <div className="w-full shrink-0 mt-1 sm:mt-3 px-1 sm:px-2 pb-2 sm:pb-3 bg-gradient-to-t from-black/70 via-black/35 to-transparent">
           {handInProgress ? (
             <ActionBar
               canAct={canAct}
@@ -1860,55 +1912,38 @@ export default function TeenPattiTableUI({ tableId, onLeaveTable }) {
               onDiscardCard={(idx) => sendPlayerAction('DISCARD_CARD', 1, { cardIndex: idx })}
             />
           ) : null}
-        </div>
 
-        {/* Boot — desktop only under buttons; phone uses right-side badge */}
-        <div className="hidden sm:flex mt-2.5 shrink-0 items-center gap-1.5 px-4 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-[12px] text-white shadow-[0_0_0_1px_rgba(212,175,55,0.35)]">
-          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
-            <circle cx="12" cy="12" r="11" fill="#d4af37" stroke="#f5e6a8" strokeWidth="1.5" />
-            <circle cx="12" cy="12" r="6" fill="none" stroke="#7a5a12" strokeWidth="1.2" strokeDasharray="2 1.5" />
-          </svg>
-          <span>Boot Amount: <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
-        </div>
-
-      </div>
-
-      {/* Phone: Game status / starting — left of table */}
-      <div className="absolute bottom-2 left-1.5 sm:bottom-4 sm:left-4 z-40 max-w-[42vw] sm:max-w-[260px] px-2 sm:px-3 py-1 sm:py-2 rounded-xl sm:rounded-2xl bg-black/50 backdrop-blur-md">
-        <div className="flex items-center gap-1.5 sm:gap-2 text-[9px] sm:text-[11px] text-white">
-          {(isTableLoading || status === 'COUNTDOWN' || dealActiveLike(status, handInProgress, countdownSeconds)) && (
-            <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 text-[#d4af37] animate-spin shrink-0" />
-          )}
-          <div className="min-w-0">
-            <div className="text-[8px] sm:text-[10px] text-emerald-400 font-semibold">Game Status</div>
-            <div className="text-white/90 truncate text-[9px] sm:text-[11px]">{statusBannerText}</div>
+          {/* Boot — desktop under buttons */}
+          <div className="hidden sm:flex mt-2.5 shrink-0 items-center justify-center gap-1.5 px-4 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-[12px] text-white shadow-[0_0_0_1px_rgba(212,175,55,0.35)] mx-auto w-fit">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+              <circle cx="12" cy="12" r="11" fill="#d4af37" stroke="#f5e6a8" strokeWidth="1.5" />
+              <circle cx="12" cy="12" r="6" fill="none" stroke="#7a5a12" strokeWidth="1.2" strokeDasharray="2 1.5" />
+            </svg>
+            <span>Boot Amount: <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
           </div>
         </div>
-        {handInProgress && currentTurnUserId && (
-          <p className="mt-0.5 sm:mt-1 text-[8px] sm:text-[10px] text-[#f5e6a8] font-semibold truncate">
-            {isMyTurn ? `Your turn${turnDisplaySeconds > 0 ? ` · ${turnDisplaySeconds}s` : ''}` : `Waiting · ${turnPlayerName}`}
-          </p>
-        )}
-        {!handInProgress && (status === 'WAITING' || status === 'COUNTDOWN') && players.length < (minPlayers || 3) && (
-          <p className="mt-0.5 sm:mt-1 text-[8px] sm:text-[10px] text-[#f5e6a8]/90 font-semibold">
-            Finding… {players.length}/{minPlayers || 3}
-          </p>
-        )}
-        {!handInProgress && (status === 'COUNTDOWN' || countdownSeconds > 0) && (
-          <p className="mt-0.5 text-[10px] sm:text-[11px] font-black text-[#d4af37] tabular-nums sm:hidden">
-            Starting {countdownSeconds}s
-          </p>
-        )}
-      </div>
 
-      {/* Phone: Boot amount — right of table */}
-      <div className="absolute bottom-2 right-1.5 z-40 sm:hidden max-w-[42vw] px-2 py-1 rounded-xl bg-black/50 backdrop-blur-md shadow-[0_0_0_1px_rgba(212,175,55,0.4)]">
-        <div className="flex items-center gap-1 text-[9px] text-white">
-          <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden className="shrink-0">
-            <circle cx="12" cy="12" r="11" fill="#d4af37" stroke="#f5e6a8" strokeWidth="1.5" />
-            <circle cx="12" cy="12" r="6" fill="none" stroke="#7a5a12" strokeWidth="1.2" strokeDasharray="2 1.5" />
-          </svg>
-          <span className="truncate">Boot <strong className="text-[#f5e6a8]">{formatChipAmount(bootRupees * 100)}</strong></span>
+        {/* Desktop status (left) */}
+        <div className="hidden sm:block absolute bottom-4 left-4 z-40 max-w-[260px] px-3 py-2 rounded-2xl bg-black/50 backdrop-blur-md">
+          <div className="flex items-center gap-2 text-[11px] text-white">
+            {(isTableLoading || status === 'COUNTDOWN' || dealActiveLike(status, handInProgress, countdownSeconds)) && (
+              <Loader2 className="w-4 h-4 text-[#d4af37] animate-spin shrink-0" />
+            )}
+            <div className="min-w-0">
+              <div className="text-[10px] text-emerald-400 font-semibold">Game Status</div>
+              <div className="text-white/90 truncate">{statusBannerText}</div>
+            </div>
+          </div>
+          {handInProgress && currentTurnUserId && (
+            <p className="mt-1 text-[10px] text-[#f5e6a8] font-semibold truncate">
+              {isMyTurn ? `Your turn${turnDisplaySeconds > 0 ? ` · ${turnDisplaySeconds}s` : ''}` : `Waiting · ${turnPlayerName}`}
+            </p>
+          )}
+          {!handInProgress && (status === 'WAITING' || status === 'COUNTDOWN') && players.length < (minPlayers || 3) && (
+            <p className="mt-1 text-[10px] text-[#f5e6a8]/90 font-semibold">
+              Finding… {players.length}/{minPlayers || 3}
+            </p>
+          )}
         </div>
       </div>
 

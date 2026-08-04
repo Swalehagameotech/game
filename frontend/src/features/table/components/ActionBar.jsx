@@ -52,8 +52,8 @@ function ActionBtn({
         active:scale-[0.97] hover:brightness-110
         ${text}
         ${large
-          ? 'min-w-[96px] sm:min-w-[110px] h-[28px] sm:h-[30px] px-3 sm:px-3.5 text-[9px] sm:text-[10px]'
-          : 'min-w-[72px] sm:min-w-[82px] h-[26px] sm:h-[28px] px-2.5 sm:px-3 text-[8px] sm:text-[9px]'}
+          ? 'min-w-[88px] sm:min-w-[110px] h-[36px] sm:h-[30px] px-3 sm:px-3.5 text-[10px] sm:text-[10px]'
+          : 'min-w-[68px] sm:min-w-[82px] h-[34px] sm:h-[28px] px-2.5 sm:px-3 text-[9px] sm:text-[9px]'}
       `}
       style={{
         background: t.bg,
@@ -240,7 +240,7 @@ export default function ActionBar({
         </div>
       )}
 
-      <div className="flex flex-nowrap items-center justify-center gap-1.5 sm:gap-2 px-2 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2 px-2 pb-1 sm:pb-0.5">
         {!(variantPhase === 'DISCARD' && discardEnabled) && !(variantPhase === 'AUCTION' && (auctionBidEnabled || auctionPassEnabled)) && (
           <>
             {/* Blind only while still BLIND — never show Chaal yet */}
